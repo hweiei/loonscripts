@@ -8,8 +8,8 @@
 #!version = 6
 
 [Script]
-cron "30 6 * * *" script-path=https://cdn.jsdelivr.net/gh/hweiei/loonscripts@main/Script/Task/QQreader.js, tag=QQ阅读任务, enable=true, timeout=600
-http-request ^https:\/\/iostgw\.reader\.qq\.com\/.*userinfo script-path=https://cdn.jsdelivr.net/gh/hweiei/loonscripts@main/Script/Task/QQreader.js, requires-body=false, timeout=10, tag=QQ阅读获取Cookies, enable=true, img-url=https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/QQ.png
+cron "30 6 * * *" script-path=https://cdn.jsdelivr.net/gh/hweiei/loonscripts@latest/Script/Task/QQreader.js, tag=QQ阅读任务, enable=true, timeout=600
+http-request ^https:\/\/iostgw\.reader\.qq\.com\/.*userinfo script-path=https://cdn.jsdelivr.net/gh/hweiei/loonscripts@latest/Script/Task/QQreader.js, requires-body=false, timeout=10, tag=QQ阅读获取Cookies, enable=true, img-url=https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/QQ.png
 
 [MitM]
 hostname = %APPEND% iostgw.reader.qq.com
