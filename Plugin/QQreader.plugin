@@ -1,0 +1,15 @@
+#!name = QQ阅读任务
+#!desc = QQ阅读自动签到 / 宝箱视频 / 书架福利 / 等级广告 / 每周阅读 / 自定义任务
+#!author = General
+#!icon = https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/QQ.png
+#!homepage = https://gitee.com/hereoo/loonscripts
+#!tag = 签到,工具
+#!system = iOS,iPadOS
+#!version = 6
+
+[Script]
+cron "30 6 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, tag=QQ阅读任务, enable=true, timeout=600
+http-request ^https:\/\/iostgw\.reader\.qq\.com\/.*userinfo script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, requires-body=false, timeout=10, tag=QQ阅读获取Cookies, enable=true, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/QQ.png
+
+[MitM]
+hostname = %APPEND% iostgw.reader.qq.com
