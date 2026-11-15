@@ -29,7 +29,7 @@
 })();
 
 /* 版本标记：日志里出现这行就说明跑的是带批量浇水的新版 */
-try { console.log('🔧 果园兼容层 v4（连浇 + 失败回退 + 缓存短路）'); } catch (e) {}
+try { console.log('🔧 果园兼容层 v5（3 路并发连浇 + 失败回退）'); } catch (e) {}
 
 var require = (function () {
   var hasOwn = Object.prototype.hasOwnProperty;
@@ -144,30 +144,34 @@ var require = (function () {
     }
   }
 
-  /* ---- 批量浇水 v4 ----
+  /* ---- 批量浇水 v5（并发连浇）----
  * 脚本的 tree() 打的是 POST /manor/water/cost，每调一次扣 10g 水。
  * 上游写法：f() 先浇一次，再 for (i=10; i < water-100; i++) tree()，
- * 每轮等 2s —— 一壶 3200g 要跑十几分钟。App 的「一键浇 20 次」
- * 就是把这个循环放前端连发，服务端没有批量接口。
+ * 循环上界用的是「水量」不是「次数」，多算 10 倍 —— 一壶 3200g 要跑 3000 轮，
+ * 每轮 2s，根本浇不完，服务端也会在中途拒绝。
  *
- * 这里在请求层做同样的事：一次调用连浇到保留线，脚本只等一次回执。
+ * 这里在请求层接管：一次调用把水浇到保留线，脚本只等一次回执。
  *
- * v4 修的三件事：
- * 1. 被服务端拒绝时不能把错误响应交给脚本。上一版第 13 次拿到 error_code
- *    后原样返回，脚本 this.token 变 undefined，后面 gain() 拼出
- *    "tubetoken": "undefined" 直接 500（水滴收集器失败），this.water 也没更新
- *    导致误判「小于100💧」。现在改为重试 + 回退到最后一次成功响应。
- * 2. 一个账号只批量浇一轮。浇完后再调这个接口直接回放缓存，否则脚本那个
- *    for 循环每轮都会把批量重新触发一遍。
- * 3. 日志从每下一条改成每 10 条 + 收尾汇总，别刷屏。
+ * v5 的加速方式：3 路并发。App 的「一键浇水」本质是前端连发，
+ * 串行 300 次 × 0.5s 要两分半，并发 3 路可以把一壶水压到 30-40 秒。
+ * 前 3 次仍然串行探测，确认接口正常再放开并发；水量接近保留线时
+ * 自动退回单路，避免一次浇过头。
+ *
+ * 其它两条是 v4 修的，保留：
+ * 1. 被拒时不能把错误响应交给脚本 —— 否则 this.token 变 undefined，
+ *    后面 gain() 拼出 "tubetoken": "undefined" 直接 500。
+ * 2. 一个账号只批量浇一轮，之后同接口直接回放缓存，防止脚本那个
+ *    死循环把批量重新触发几百次。
  */
-var WATER_KEEP = 100;      // 与脚本自身策略一致：低于 100g 留到明天
-var WATER_MAX = 400;       // 单次最多 400 下（4000g），防止一壶水把插件跑过超时
-var WATER_GAP = 450;       // 每下基础间隔，接近人工连点
-var WATER_JITTER = 100;     // 随机抖动，避免固定节奏
-var WATER_RETRY = 2;       // 单个失败最多重试次数
-var WATER_BACKOFF = 1200;  // 失败后退避
-var WATER_TIMEOUT = 8000;  // 单次请求超时（毫秒）
+var WATER_KEEP = 100;       // 与脚本自身策略一致：低于 100g 留到明天
+var WATER_MAX = 400;        // 单次最多 400 下（4000g）
+var WATER_CONCURRENCY = 3;  // 并发路数
+var WATER_GAP = 150;        // 每路发完到下一下的间隔
+var WATER_JITTER = 60;      // 随机抖动
+var WATER_RETRY = 2;        // 失败重试次数（降级为串行）
+var WATER_BACKOFF = 1000;   // 失败退避
+var WATER_TIMEOUT = 8000;   // 单次请求超时（毫秒）
+var WATER_SLOW_TAIL = 150;  // 水量低于这个值退回单路
 
 var waterState = {};
 
@@ -206,7 +210,7 @@ function waterLeftOf(obj) {
  * 只保留 tree() 会读的字段，去掉所有会触发额外请求的分支
  * （PK 领奖、宝箱、摇骰子、浇水竞赛），并保证 accumulate_water_vo 存在，
  * 否则 tree() 里 `else if (water >= 7) await this.gainWater()` 会被打几百次。 */
-function safeBody(obj, forceZero) {
+function safeBody(obj, forceZero, left) {
   var out = {};
   if (obj && typeof obj === 'object') {
     for (var k in obj) {
@@ -219,6 +223,7 @@ function safeBody(obj, forceZero) {
   delete out.shake_dice_activity_icon_vo;
   out.error_code = 0;
   if (forceZero) out.now_water_amount = 0;
+  else if (typeof left === 'number') out.now_water_amount = left;
   if (!out.accumulate_water_vo) {
     out.accumulate_water_vo = {
       activity_water_amount: 0,
@@ -238,17 +243,21 @@ function waterBatch(o, cb) {
 
   // 已经浇过一轮：直接回放，不再打网络（脚本的 for 循环会反复调这个接口）
   if (st.done) {
-    var cached = st.cache || safeBody(null, true);
+    var cached = st.cache || safeBody(null, true, 0);
     return cb(null, { statusCode: 200, status: 200, headers: {}, body: cached }, cached);
   }
 
   var t0 = Date.now();
-  var times = 0;      // 成功次数
-  var retry = 0;      // 连续失败次数
-  var prev = null;
-  var stale = 0;
-  var lastObj = null;
-  var lastBody = null;
+  var success = 0;
+  var pending = 0;
+  var stopped = false;
+  var ended = false;
+  var conc = 1;                 // 前几次串行探测
+  var minLeft = null;
+  var lastOkObj = null;
+  var lastOkBody = null;
+  var stopReason = '';
+  var stopMark = true;
 
   var req = {
     url: o.url,
@@ -258,82 +267,90 @@ function waterBatch(o, cb) {
     method: o.method
   };
 
-  function end(reason, markDone) {
-    if (st.done && markDone !== true) return;
-    if (markDone !== false) {
+  function finalize() {
+    if (ended) return;
+    ended = true;
+    if (stopMark) {
       st.done = true;
-      st.cache = safeBody(lastObj, st.drained);
+      st.cache = safeBody(lastOkObj, st.drained, minLeft);
     }
     var cost = ((Date.now() - t0) / 1000).toFixed(1);
-    var left = lastObj ? waterLeftOf(lastObj) : null;
     try {
-      console.log('💧 连浇结束：' + reason + '｜成功 ' + times + ' 次'
-        + (left === null ? '' : '，剩余 ' + left + 'g')
+      console.log('💧 连浇结束：' + stopReason + '｜成功 ' + success + ' 次'
+        + (minLeft === null ? '' : '，剩余 ' + minLeft + 'g')
         + '，用时 ' + cost + 's');
     } catch (e) {}
-    if (lastObj && lastBody) {
-      cb(null, { statusCode: 200, status: 200, headers: {}, body: lastBody }, lastBody);
+    if (lastOkObj && lastOkBody) {
+      cb(null, { statusCode: 200, status: 200, headers: {}, body: lastOkBody }, lastOkBody);
     } else {
       cb(new Error('water batch failed'), { statusCode: 0, status: 0, headers: {}, body: '' }, '');
     }
   }
 
-  function step() {
-    fire(req, function (err, resp, data) {
-      if (err) {
-        if (retry < WATER_RETRY) {
-          retry++;
-          try { console.log('⚠️ 浇水请求失败（' + err + '），' + (WATER_BACKOFF / 1000) + 's 后重试 ' + retry + '/' + WATER_RETRY); } catch (e) {}
-          return setTimeout(step, WATER_BACKOFF);
-        }
-        return end('请求失败');
-      }
-
-      var obj = parseJson(data);
-      if (!isOk(obj)) {
-        var code = obj ? obj.error_code : 'parse';
-        var msg = obj
-          ? (obj.error_msg || obj.error_message || obj.msg || '')
-          : String(data || '').slice(0, 120);
-        if (retry < WATER_RETRY) {
-          retry++;
-          try { console.log('⚠️ 浇水被拒 [' + code + '] ' + msg + '，' + (WATER_BACKOFF / 1000) + 's 后重试 ' + retry + '/' + WATER_RETRY); } catch (e) {}
-          return setTimeout(step, WATER_BACKOFF);
-        }
-        try { console.log('⛔ 浇水连续被拒 [' + code + '] ' + msg + '，本轮停止'); } catch (e) {}
-        return end('被服务端拒绝');
-      }
-
-      retry = 0;
-      times++;
-      lastObj = obj;
-      lastBody = data;
-
-      var left = waterLeftOf(obj);
-      if (left === null) {
-        try { console.log('💧 响应里没有水量字段，按单次处理'); } catch (e) {}
-        return end('无水量字段', false);
-      }
-      if (times === 1 || times % 10 === 0) {
-        try { console.log('💧 已浇 ' + times + ' 次，剩余 ' + left + 'g'); } catch (e) {}
-      }
-
-      if (left < WATER_KEEP) { st.drained = true; return end('已到保留线'); }
-      if (times >= WATER_MAX) return end('达到单次上限 ' + WATER_MAX + ' 下');
-
-      if (prev !== null && left === prev) {
-        stale++;
-        if (stale >= 3) return end('水量连续 ' + stale + ' 次没变化');
-      } else {
-        stale = 0;
-      }
-      prev = left;
-
-      setTimeout(step, WATER_GAP + Math.floor(Math.random() * WATER_JITTER));
-    });
+  function stop(reason, markDone) {
+    if (!stopped) {
+      stopped = true;
+      stopReason = reason;
+      stopMark = markDone !== false;
+    }
+    if (pending === 0) finalize();
   }
 
-  step();
+  function launch() {
+    if (stopped || ended) return;
+    while (pending < conc && !stopped && !ended) {
+      pending++;
+      fire(req, function (err, resp, data) {
+        pending--;
+        if (ended) return;
+
+        if (err) {
+          return stop('请求失败（' + err + '）', false);
+        }
+
+        var obj = parseJson(data);
+        if (!isOk(obj)) {
+          var code = obj ? obj.error_code : 'parse';
+          var msg = obj
+            ? (obj.error_msg || obj.error_message || obj.msg || '')
+            : String(data || '').slice(0, 100);
+          return stop('被服务端拒绝 [' + code + '] ' + msg);
+        }
+
+        var left = waterLeftOf(obj);
+        if (left === null) {
+          return stop('响应里没有水量字段', false);
+        }
+
+        success++;
+        lastOkObj = obj;
+        lastOkBody = data;
+        if (minLeft === null || left < minLeft) minLeft = left;
+
+        if (success === 1 || success % 20 === 0) {
+          try { console.log('💧 已浇 ' + success + ' 次，剩余 ' + minLeft + 'g'); } catch (e) {}
+        }
+
+        // 前 3 次串行探路；水量见底前退回单路，避免并发浇过头
+        if (success >= 3) conc = WATER_CONCURRENCY;
+        if (success >= 80) conc = WATER_CONCURRENCY + 1;  // 连浇 80 次无异常，再升一路
+        if (minLeft < WATER_SLOW_TAIL) conc = 1;
+
+        if (minLeft < WATER_KEEP) {
+          st.drained = true;
+          return stop('已到保留线');
+        }
+        if (success >= WATER_MAX) {
+          return stop('达到单次上限 ' + WATER_MAX + ' 下');
+        }
+        if (!stopped) {
+          setTimeout(launch, WATER_GAP + Math.floor(Math.random() * WATER_JITTER));
+        }
+      });
+    }
+  }
+
+  launch();
 }
 
   function send(method) {
