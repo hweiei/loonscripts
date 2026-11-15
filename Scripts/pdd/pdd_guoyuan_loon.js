@@ -163,8 +163,8 @@ var require = (function () {
  */
 var WATER_KEEP = 100;      // 与脚本自身策略一致：低于 100g 留到明天
 var WATER_MAX = 400;       // 单次最多 400 下（4000g），防止一壶水把插件跑过超时
-var WATER_GAP = 350;       // 每下基础间隔，接近人工连点
-var WATER_JITTER = 80;     // 随机抖动，避免固定节奏
+var WATER_GAP = 450;       // 每下基础间隔，接近人工连点
+var WATER_JITTER = 100;     // 随机抖动，避免固定节奏
 var WATER_RETRY = 2;       // 单个失败最多重试次数
 var WATER_BACKOFF = 1200;  // 失败后退避
 var WATER_TIMEOUT = 8000;  // 单次请求超时（毫秒）
