@@ -144,7 +144,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v13（宝箱 2s + 收尾不阻塞）`);
+      console.log(`🔧 脚本版本: v14（宝箱 2s + 收尾不阻塞 + 日志单参数）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
