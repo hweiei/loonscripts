@@ -85,7 +85,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v7（队列化 + 原生超时 + 连续超时熔断）`);
+      console.log(`🔧 脚本版本: v7.1（队列化 + 熔断，已移除不兼容的 timeout 参数）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -1296,9 +1296,6 @@ function Env(t, e) {
       void 0 === t.headers.Cookie && void 0 === t.cookieJar && (t.cookieJar = this.ckjar));
     }
     get(t, e = () => { }) {
-      // Loon/Surge 的 $httpClient 原生支持 timeout（秒）。
-      // 不设的话，服务端不返回时回调永远不触发，JS 侧的 setTimeout 兜不住。
-      t && 'object' == typeof t && void 0 === t.timeout && (t.timeout = 12);
       switch (
           (t.headers && (delete t.headers['Content-Type'], delete t.headers['Content-Length'], delete t.headers['content-type'], delete t.headers['content-length']),
           t.params && (t.url += '?' + this.queryStr(t.params)),
@@ -1320,7 +1317,6 @@ function Env(t, e) {
       }
     }
     post(t, e = () => { }) {
-      t && 'object' == typeof t && void 0 === t.timeout && (t.timeout = 12);
       const s = t.method ? t.method.toLocaleLowerCase() : 'post';
       switch (
           (t.body && t.headers && !t.headers['Content-Type'] && !t.headers['content-type'] && (t.headers['content-type'] = 'application/x-www-form-urlencoded'),
