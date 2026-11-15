@@ -75,7 +75,8 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.4";
+const VERSION = "v1.1.0-loon.5";
+let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
 
@@ -117,7 +118,14 @@ function log(msg, detail = null) {
   try { time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }); }
   catch (e) { time = new Date().toISOString().replace('T', ' ').slice(0, 19); }
   if (detail !== null) {
-    console.log(`${LOG_PREFIX} [${time}] ${msg}\n${typeof detail === 'object' ? JSON.stringify(detail, null, 2) : detail}`);
+    let s;
+    if (typeof detail === 'object') {
+      try { s = JSON.stringify(detail); } catch (e) { s = String(detail); }
+      if (s.length > 500) s = s.slice(0, 500) + ` …(共${s.length}字)`;
+    } else {
+      s = String(detail);
+    }
+    console.log(`${LOG_PREFIX} [${time}] ${msg} ${s}`);
   } else {
     console.log(`${LOG_PREFIX} [${time}] ${msg}`);
   }
@@ -272,7 +280,9 @@ async function getHomePage(pdduid, cookieStr, tubetoken) {
 
   try {
     const res = await httpRequest({ url, headers: { "Cookie": cookieStr }, body });
-    log("首页接口返回:", res);
+    const _h = (res && res.user_manor_info) || {};
+    log(`[首页] 响应摘要: error=${res ? res.error_code : 'null'} uid=${_h.uid || '-'} water=${_h.water_amount !== undefined ? _h.water_amount : '-'} level=${_h.product ? _h.product.level : '-'}`);
+    if (!res || res.error_code || !_h.uid) { log("[首页] 原始响应:", res); }
     if (res && res.error_code === 40001) {
       log("[错误] 40001 - Cookie 无效或 PDDAccessToken 缺失/过期！");
       return { newToken: null, water: 0 };
@@ -300,7 +310,8 @@ async function dailyCheckin(pdduid, cookieStr, tubetoken) {
       headers: { "Cookie": cookieStr },
       body: { "type": 201811, "params": { "ui_id": 3, "type": 2 }, "fun_id": "wechat_app_home", "tubetoken": tubetoken, "fun_pl": 2 }
     });
-    log("签到结果:", res);
+    log(`[签到] error=${res ? res.error_code : 'null'} success=${res ? res.success : '-'} msg=${(res && res.error_msg) || '-'}`);
+    if (res && res.error_code) { log("[签到] 原始响应:", res); }
     if (res && res.success) { log("[签到] 成功！"); return true; }
     log("[签到] 今日已签到:", res ? res.error_msg : "");
     return false;
@@ -399,6 +410,8 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
     const canClaim = tasks.filter(t => !t.is_draw && t.is_open && t.finished_count >= 1);
     const needAccept = tasks.filter(t => !t.is_draw && !t.is_open && t.finished_count >= 1);
     log(`[任务] 共${tasks.length}个，可领取${canClaim.length}，待接受${needAccept.length}`);
+    __missionStat = { total: tasks.length, claim: canClaim.length, accept: needAccept.length };
+    if (!tasks.length) { log("[任务] 原始响应:", res); }
 
     for (const t of needAccept) {
       log(`[接受任务] act=${t.activity_id} id=${t.mission_id}`);
@@ -614,7 +627,7 @@ async function main() {
   const stolenWater = -1;
 
   const finalWater = await getWater(pdduid, cookieStr);
-  const msg = `UID: ${pdduid}\n水滴: ${startWater} → ${finalWater}\n任务: +${claimedWater}g | 签到: ${checkinOk ? "已签" : "未签"}`;
+  const msg = `UID: ${pdduid}\n水滴: ${startWater} → ${finalWater}\n任务: 共${__missionStat.total}个/可领${__missionStat.claim}个/领到${claimedWater}g\n签到: ${checkinOk ? "已签" : "未签"}`;
   log("--- [6/6] 完成 ---", msg);
   $notify(`拼多多果园 ${VERSION} 🎉`, `水滴余额: ${finalWater}`, msg);
   __safeDone({});
