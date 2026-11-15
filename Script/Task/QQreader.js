@@ -92,7 +92,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v9（上游基线 + 每宝箱独立 init&scan）`);
+      console.log(`🔧 脚本版本: v10（看门狗 + 最新 giftId）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -225,6 +225,45 @@ function udid2() {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 带看门狗的 GET：Loon 原生 timeout 只覆盖建连阶段，服务端「连上了但不回包」
+// 时回调永远不会来，脚本就永久卡死（日志停在上一行、没有任何报错）。
+// 这里在 JS 层加一个定时器，到点直接返回错误码，让主流程能继续往下走。
+function httpGetSafe(url, headers, timeoutMs = 12000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { try { clearTimeout(timer); } catch (e) {} }
+      resolve(payload);
+    };
+
+    timer = setTimeout(() => {
+      finish({ code: -998, msg: `等待 ${timeoutMs / 1000}s 无响应` });
+    }, timeoutMs + 300);
+
+    try {
+      $.get({ url, timeout: timeoutMs, headers }, (err, resp, data) => {
+        if (err) { finish({ code: -997, msg: '请求失败' }); return; }
+        try {
+          finish(JSON.parse(data));
+        } catch (e) {
+          finish({ code: -996, msg: '响应不是 JSON' });
+        }
+      });
+    } catch (e) {
+      finish({ code: -995, msg: '请求异常' });
+    }
+  });
+}
+
+function shortId(v) {
+  const s = String(v == null ? '' : v);
+  return s.length > 9 ? `${s.slice(0, 4)}..${s.slice(-4)}` : s;
 }
 
 function decorateUnit(unit, awardType) {
@@ -674,6 +713,7 @@ async function GetVideoinit(Cookie, silent = false) {
   return new Promise((resolve) => {
     let Url = {
       url: "https://eventv3.reader.qq.com/activity/new_welfare/init",
+      timeout: 12000,
       headers: {
         'Accept': 'application/json, text/plain, */*',
         'cookie': Cookie
@@ -715,35 +755,24 @@ async function GetVideoinit(Cookie, silent = false) {
 // ===================== 视频扫一扫（前置检查） =====================
 
 async function ScanVideo(Cookie, mark = 0) {
-  return new Promise((resolve) => {
-    let Url = {
-      url: `https://ih5.reader.qq.com/api/comAds/scan?mark=${mark}&scene=1`,
-      timeout: 15000,   // Loon 单位是毫秒，默认仅 5000
-      headers: {
+  const r = await httpGetSafe(
+      `https://ih5.reader.qq.com/api/comAds/scan?mark=${mark}&scene=1`,
+      {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
         'Accept': 'application/json, text/plain, */*',
+        'Connection': 'close',
         'cookie': Cookie
-      }
-    };
-
-    $.get(Url, (err, resp, data) => {
-      if (err) { console.log('【视频扫描】请求失败'); resolve(null); return; }
-      try {
-        const r = JSON.parse(data);
-        if (logs === 1) console.log(`【视频扫描】原始响应: ${data}`);
-        if (r.code === 0) {
-          console.log('📡 视频扫描完成');
-        } else {
-          console.log(`📡 视频扫描异常 [${r.code}]: ${r.msg || ''}`);
-        }
-        resolve(r);
-      } catch (e) {
-        console.log(`【视频扫描】解析出错: ${e}`);
-        resolve(null);
-      }
-    });
-  });
+      },
+      12000
+  );
+  if (logs === 1) console.log(`【视频扫描】code=${r.code} ${r.msg || ''}`);
+  if (r.code === 0) {
+    console.log('📡 视频扫描完成');
+  } else {
+    console.log(`📡 视频扫描异常 [${r.code}]: ${r.msg || ''}`);
+  }
+  return r;
 }
 
 // ===================== 宝箱视频任务 =====================
@@ -756,43 +785,67 @@ async function BoxVideo(Cookie) {
     return;
   }
 
-  const gifts = $.availableGifts.slice();
-  const total = gifts.length;
+  const t0 = Date.now();
+  const total = $.availableGifts.length;
+  const BUDGET = 100000;          // 本次预算 100s，到点一定收尾，绝不无限拖
+  const attempts = {};            // giftId -> 已尝试次数
+  const okIds = {};               // giftId -> 已领到
   const rewardsSummary = {};
   let successCount = 0;
-  let denied = 0;
+  let failStreak = 0;
 
-  console.log(`\n📦 发现 ${total} 个可领取礼物`);
+  console.log(`\n📦 共 ${total} 个待领取（本次预算 ${BUDGET / 1000}s）`);
 
-  for (let i = 0; i < total; i++) {
-    const target = gifts[i];
-    console.log(`\n🎁 正在领取 ${i + 1}/${total}: ${target.giftName} x${target.packageCount}`);
+  for (let step = 0; step < total * 3; step++) {
+    if (Date.now() - t0 > BUDGET) {
+      console.log(`\n⏱️ 已用 ${((Date.now() - t0) / 1000).toFixed(0)}s，到预算上限，收尾`);
+      break;
+    }
 
-    // 核心修复：scan 下发的领取资格是一次性的，只在循环外调一次的话，
-    // 第 1 个宝箱用掉资格后，后面全部返回 -3（视频未看完）。
-    // 每次领取前重走「init + scan」，等价于把整个脚本重跑一遍——实测重跑就能领到下一个。
+    // 每轮重新 init：等价于「重跑脚本」时的那一次初始化。
+    // 服务端每次 init 下发的 giftId 可能不是同一批，拿上一轮的旧 id 去领，
+    // 请求会发出去但永远不回包（就是卡住的那一步）。
     await GetVideoinit(Cookie, true);
-    const gift = ($.availableGifts || []).find(g => g.giftId === target.giftId) || target;
+    const list = ($.availableGifts || []).filter(g => {
+      const id = String(g.giftId);
+      return !okIds[id] && (attempts[id] || 0) < 2;
+    });
+    if (!list.length) break;
 
-    const scan = await ScanVideo(Cookie);
-    if (scan && scan.code !== 0) {
-      console.log(`   ⚠️ 扫描未通过 [${scan.code}]，跳过该宝箱`);
+    const gift = list[0];         // 永远领「当前列表的第一个」，不认旧 id
+    const gid = String(gift.giftId);
+    attempts[gid] = (attempts[gid] || 0) + 1;
+
+    console.log(`\n🎁 ${gift.giftName} x${gift.packageCount} (id:${shortId(gid)}${attempts[gid] > 1 ? ' 重试' : ''})`);
+
+    let scan = await ScanVideo(Cookie);
+    if (scan.code !== 0) {
+      await sleep(600);
+      scan = await ScanVideo(Cookie);
+    }
+    if (scan.code !== 0) {
+      console.log('   ⚠️ 扫描未通过，跳过该宝箱');
       continue;
     }
 
-    let result = await runBoxVideo(Cookie, gift.giftId, i + 1);
+    let result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
 
-    // -3 兜底：可能只是「观看时长」还没被服务端记账。此时不要再 scan
-    // （重扫会把计时清零），直接等 4s 用同一份资格再领一次。
-    // 只对失败的宝箱生效，正常流程不受影响；连续 3 个失败就收手。
-    if (result.code === -3 && denied < 3) {
-      console.log('   ↻ 未看完(-3)，等 4s 再领一次');
-      await sleep(4000);
-      result = await runBoxVideo(Cookie, gift.giftId, i + 1);
+    // -3：资格还在，只是「观看时长」没被记账。重扫会把计时清零，所以只等不扫。
+    if (result.code === -3) {
+      console.log('   ↻ 未看完(-3)，等 3s 用同一份资格再领');
+      await sleep(3000);
+      result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
+    } else if (result.code === -998 || result.code === -997) {
+      // 请求被黑洞：换一条新连接重发，服务端经常只对其中一条回包
+      console.log('   ↻ 无响应，换连接重发一次');
+      await sleep(800);
+      result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
     }
 
     if (result.code === 0) {
+      okIds[gid] = true;
       successCount++;
+      failStreak = 0;
       if (!rewardsSummary[gift.awardType]) {
         rewardsSummary[gift.awardType] = {
           name: gift.giftName.replace(/x\d+$/, "").trim(),
@@ -801,54 +854,39 @@ async function BoxVideo(Cookie) {
         };
       }
       rewardsSummary[gift.awardType].total += gift.packageCount;
-      denied = 0;
-      console.log(`✅ 领取成功 +${gift.packageCount}${gift.unit}`);
+      console.log(`   ✅ +${gift.packageCount}${gift.unit}  (成功 ${successCount}/${total}，已用 ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     } else {
-      if (result.code === -3) denied++;
-      const errHint = result.code === -5 ? " (需要先看广告)" :
-          result.code === -3 ? " (条件不满足)" : "";
-      console.log(`❌ 领取失败 [${result.code}]: ${result.msg || '未知错误'}${errHint}`);
-      if (denied >= 3) {
-        console.log(`\n⛔ 连续 ${denied} 个宝箱被判「视频未看完」，停止本轮（再扫也是触发风控）`);
+      failStreak++;
+      const hint = result.code === -5 ? " (需要先看广告)" :
+          result.code === -3 ? " (视频未看完)" : "";
+      console.log(`   ❌ 领取失败 [${result.code}]: ${result.msg || '未知错误'}${hint}`);
+      if (failStreak >= 4) {
+        console.log(`\n⛔ 连续 ${failStreak} 个失败，停止本轮`);
         break;
       }
     }
 
-    await sleep(1500);
+    await sleep(600);
   }
 
   $.videoRewards = rewardsSummary;
-  console.log(`\n📊 宝箱视频任务完成: 成功 ${successCount}/${total}`);
+  console.log(`\n📊 宝箱任务完成: 成功 ${successCount}/${total}，用时 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 }
 
 async function runBoxVideo(Cookie, giftId, attempt) {
-  return new Promise((resolve) => {
-    const Url = {
-      url: `https://ih5.reader.qq.com/api/comAds/getGift?giftId=${giftId}&scene=1`,
-      timeout: 15000,   // Loon 单位是毫秒，默认仅 5000
-      headers: {
+  const r = await httpGetSafe(
+      `https://ih5.reader.qq.com/api/comAds/getGift?giftId=${giftId}&scene=1`,
+      {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
         'Accept': 'application/json, text/plain, */*',
+        'Connection': 'close',
         'cookie': Cookie
-      }
-    };
-
-    $.get(Url, async (err, resp, data) => {
-      if (logs == 1) {
-        console.log(`第 ${attempt} 次请求状态码: ${resp?.status}`);
-        console.log(`原始响应: ${data}`);
-      }
-
-      try {
-        data = JSON.parse(data);
-        resolve(data);
-      } catch (e) {
-        console.log(`解析响应出错: ${e}`);
-        resolve({ code: -1, msg: '解析响应失败' });
-      }
-    });
-  });
+      },
+      12000
+  );
+  if (logs === 1) console.log(`第 ${attempt} 次 getGift: code=${r.code} ${r.msg || ''}`);
+  return r;
 }
 
 // ===================== 等级广告视频 =====================
