@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v9（2026-11-16）：新增果园任务版（任务奖励 / 打卡 / 宝箱 1-5 / 前日奖励），浇水保持 3-4 路并发
+#!desc = v10（2026-11-16）：任务版改诊断模式，只采集一次真实返回不批量领取；删掉 9 个写死的 2022 过期任务 ID；修 reward 崩溃；浇水不变
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 9
+#!version = 10
 
 [Script]
 ; 1) 抓 AccessToken，写入本地存储 ddgyck（只读 header，不改请求）
