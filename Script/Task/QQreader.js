@@ -85,7 +85,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v8（每宝箱独立 init+scan，模拟观看间隔，三重熔断）`);
+      console.log(`🔧 脚本版本: v8.1（每宝箱独立 scan，等待自适应 1.5s 起）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -775,106 +775,113 @@ async function BoxVideo(Cookie) {
 
   const gifts = $.availableGifts.slice();
   const total = gifts.length;
-  const REQ_TIMEOUT = 10000;                     // 单请求 10s（$httpClient 原生超时兜底）
-  const WATCH_MIN = 15000, WATCH_JIT = 5000;     // 模拟观看 15-20s
-  const GAP_MIN = 12000, GAP_JIT = 6000;         // 宝箱间隔 12-18s，两次 scan 不贴脸
-  const deadline = Date.now() + 7.5 * 60 * 1000; // 宝箱阶段总预算 7.5 分钟（确保整脚本 < 600s）
+  const REQ_TIMEOUT = 10000;      // 单请求 10s（$httpClient 原生超时兜底）
+  const WATCH_START = 1500;       // 起步只等 1.5s：v7 实测 scan 后 0.8s 领奖就能成功
+  const WATCH_MAX = 20000;
+  const WATCH_STEP = 5000;
+  const GAP_MIN = 2500, GAP_JIT = 2000;   // 宝箱间隔 2.5-4.5s
+  const deadline = Date.now() + 5 * 60 * 1000;
   const rewardsSummary = {};
   let successCount = 0;
   let consecutiveTimeout = 0;
   let consecutiveDenied = 0;
+  let watch = WATCH_START;
   let aborted = false;
 
-  console.log(`\n📦 发现 ${total} 个可领取礼物`);
-  console.log(`   每个宝箱独立走「初始化 → scan → 模拟观看 → 领奖」，单个约 35s`);
+  console.log(`\n📦 发现 ${total} 个可领取礼物（每宝箱独立 scan，起步等 1.5s，不够再自动加长）`);
 
   for (let i = 0; i < total && !aborted; i++) {
     const target = gifts[i];
-    const humanName = String(target.giftName || '').replace(/\s*x\d+\s*$/i, '').trim();
 
-    // —— 熔断一：总预算
     if (Date.now() > deadline) {
-      console.log(`\n⏰ 已达时间预算，剩余 ${total - i} 个宝箱留到下次运行（重跑脚本会接着领）`);
+      console.log(`\n⏰ 已达时间预算，剩余 ${total - i} 个宝箱留到下次运行（重跑会接着领）`);
       break;
     }
-    // —— 熔断二：服务端挂请求
     if (consecutiveTimeout >= 3) {
       console.log(`\n⛔ 连续 ${consecutiveTimeout} 个请求无响应，服务端在挂起，停止本轮`);
       break;
     }
-    // —— 熔断三：连续被判未看完，说明再 scan 也是触发风控
     if (consecutiveDenied >= 3) {
       console.log(`\n⛔ 连续 ${consecutiveDenied} 个宝箱被判「视频未看完」，停止本轮以避免风控`);
       aborted = true;
       break;
     }
 
+    const humanName = String(target.giftName || '').replace(/\s*x\d+\s*$/i, '').trim();
     console.log(`\n🎁 ${i + 1}/${total}: ${humanName}${target.packageCount ? ' ×' + target.packageCount : ''}`);
 
-    // 关键：每个宝箱前重新初始化活动状态，等价于「重跑一次脚本」的前置动作。
-    // 实测一次 scan 只下发一个领取资格，且 init 会刷新活动会话。
+    // 每个宝箱前刷新活动状态，等价于「重跑一次脚本」的前置动作
     await GetVideoinit(Cookie, true);
     const list = $.availableGifts || [];
     let alive = list.find(g => g.giftId === target.giftId);
     if (!alive && list.length > 0) {
-      console.log('   ↷ 该宝箱已不在可领取列表（可能已领），跳过');
+      console.log('   ↷ 已不在可领取列表（可能已领），跳过');
       continue;
     }
     if (!alive) {
-      // init 抖动导致列表为空时，沿用初始快照，不要白白丢掉一个宝箱
       console.log('   ⚠️ 状态刷新失败，沿用初始信息继续');
       alive = target;
     }
 
-    // 每个宝箱各 scan 一次，且与上一次 scan 保持 15s 以上间隔
-    const tScan = Date.now();
-    const scanRes = await withTimeout(ScanVideo(Cookie, 0, i + 1), REQ_TIMEOUT + 5000, `scan#${i + 1}`);
-    console.log(`   ↳ scan ${Date.now() - tScan}ms  code=${scanRes ? scanRes.code : 'null'}`);
-    if (!scanRes || scanRes.code !== 0) {
-      consecutiveDenied++;
-      console.log('   ⚠️ 扫描未通过，跳过该宝箱（不发明知会失败的领奖请求）');
-      await sleep(3000);
-      continue;
+    let ok = false, lastCode = -1, lastMsg = '';
+
+    // 第一轮用当前 watch，失败（-3）才加码重试一次
+    for (let round = 0; round <= 1 && !ok; round++) {
+      if (round === 1) {
+        watch = Math.min(WATCH_MAX, Math.max(WATCH_STEP, watch + WATCH_STEP));
+        console.log(`   ↻ 上轮判「未看完」，本轮等 ${(watch / 1000).toFixed(1)}s 再试`);
+      }
+
+      const tScan = Date.now();
+      const scanRes = await withTimeout(ScanVideo(Cookie, 0, i + 1), REQ_TIMEOUT + 5000, `scan#${i + 1}`);
+      console.log(`   ↳ scan ${Date.now() - tScan}ms  code=${scanRes ? scanRes.code : 'null'}`);
+      if (!scanRes || scanRes.code !== 0) {
+        console.log('   ⚠️ 扫描未通过，跳过该宝箱');
+        lastCode = scanRes ? scanRes.code : -1;
+        lastMsg = 'scan 失败';
+        break;
+      }
+
+      const wait = watch + Math.floor(Math.random() * 500);
+      await sleep(wait);
+
+      const tGift = Date.now();
+      const result = await withTimeout(
+        runBoxVideo(Cookie, alive.giftId, i + 1, round),
+        REQ_TIMEOUT + 2000,
+        `getGift#${i + 1}`
+      );
+      console.log(`   ↳ 领取 ${Date.now() - tGift}ms  code=${result.code}`);
+      consecutiveTimeout = result.code === -998 ? consecutiveTimeout + 1 : 0;
+
+      if (result.code === 0) {
+        ok = true;
+        successCount++;
+        consecutiveDenied = 0;
+        // 成功了就把等待往回收一点，逼近服务端能接受的最小值
+        watch = Math.max(WATCH_START, watch - 500);
+        if (!rewardsSummary[alive.awardType]) {
+          rewardsSummary[alive.awardType] = { name: humanName, total: 0, unit: alive.unit || "🎁" };
+        }
+        rewardsSummary[alive.awardType].total += alive.packageCount;
+        console.log(`✅ 领取成功 +${alive.packageCount} ${alive.unit}`);
+      } else {
+        lastCode = result.code;
+        lastMsg = result.msg || '';
+        if (logs === 1) console.log(`   原始响应: ${JSON.stringify(result)}`);
+      }
     }
 
-    // 模拟观看时长：太快会被服务端判为未看完（-3）
-    const wait = WATCH_MIN + Math.floor(Math.random() * WATCH_JIT);
-    console.log(`   ⏳ 模拟观看 ${Math.round(wait / 1000)}s ...`);
-    await sleep(wait);
-
-    const tGift = Date.now();
-    let result = await withTimeout(
-      runBoxVideo(Cookie, alive.giftId, i + 1, 0),
-      REQ_TIMEOUT + 2000,
-      `getGift#${i + 1}`
-    );
-    console.log(`   ↳ 领取 ${Date.now() - tGift}ms  code=${result.code}`);
-    consecutiveTimeout = result.code === -998 ? consecutiveTimeout + 1 : 0;
-
-    if (result.code === 0) {
-      successCount++;
-      consecutiveDenied = 0;
-      if (!rewardsSummary[alive.awardType]) {
-        rewardsSummary[alive.awardType] = {
-          name: humanName,
-          total: 0,
-          unit: alive.unit || "🎁"
-        };
-      }
-      rewardsSummary[alive.awardType].total += alive.packageCount;
-      console.log(`✅ 领取成功 +${alive.packageCount} ${alive.unit}`);
-    } else {
-      if (result.code === -3) consecutiveDenied++;
-      const errHint = result.code === -5 ? " (需要先看广告)" :
-          result.code === -3 ? " (条件不满足)" :
-          result.code === -998 ? " (请求超时)" : "";
-      console.log(`❌ 领取失败 [${result.code}]: ${result.msg || '未知错误'}${errHint}`);
-      if (logs === 1) console.log(`   原始响应: ${JSON.stringify(result)}`);
+    if (!ok) {
+      if (lastCode === -3) consecutiveDenied++;
+      const errHint = lastCode === -5 ? " (需要先看广告)" :
+          lastCode === -3 ? " (条件不满足)" :
+          lastCode === -998 ? " (请求超时)" : "";
+      console.log(`❌ 领取失败 [${lastCode}]: ${lastMsg || '未知错误'}${errHint}`);
     }
 
     if (i < total - 1) {
       const gap = GAP_MIN + Math.floor(Math.random() * GAP_JIT);
-      console.log(`   ⏲ 间隔 ${Math.round(gap / 1000)}s 后继续`);
       await sleep(gap);
     }
   }
@@ -882,7 +889,7 @@ async function BoxVideo(Cookie) {
   $.videoRewards = rewardsSummary;
   console.log(`\n📊 宝箱视频任务完成: 成功 ${successCount}/${total}`);
   if (successCount < total) {
-    console.log(`   剩余 ${total - successCount} 个未领取，可再次运行脚本继续（会自动跳过已领的）`);
+    console.log(`   剩余 ${total - successCount} 个未领取，再运行一次脚本会接着领（已领的自动跳过）`);
   }
 }
 
