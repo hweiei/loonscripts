@@ -4,7 +4,7 @@
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
-#!version = 3
+#!version = 4
 
 [Script]
 ; 1) 抓 AccessToken，写入本地存储 ddgyck（只读 header，不改请求）
