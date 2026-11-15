@@ -1,19 +1,19 @@
 #!name = 拼多多果园
-#!desc = v10（2026-11-16）：任务版改诊断模式，只采集一次真实返回不批量领取；删掉 9 个写死的 2022 过期任务 ID；修 reward 崩溃；浇水不变
+#!desc = v11（2026-11-16）：任务版换 2026 新接口（mission/list + accept/draw，Cookie 认证），复用 5jwoj/BeRich 的 pdd_orchard；浇水保持并发连浇
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 10
+#!version = 11
 
 [Script]
-; 1) 抓 AccessToken，写入本地存储 ddgyck（只读 header，不改请求）
-http-request ^https?:\/\/([^\/]+\.)?(yangkeduo|pinduoduo)\.com\/ script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_getToken.js, requires-body=false, timeout=10, tag=拼多多Token抓取, enable=true
+; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
+http-request ^https?:\/\/mobile\.yangkeduo\.com\/ script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_getToken.js, requires-body=false, timeout=10, tag=拼多多凭据抓取, enable=true
 ; 2) 果园定时任务（已内置 Loon 兼容层，不要再用上游 pdd_guoyuan.js）
 cron "30 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_guoyuan_loon.js, timeout=300, tag=拼多多果园, enable=true
-; 3) 果园任务版：任务奖励 / 打卡 / 宝箱 1-5 / 前日奖励（与浇水错开 5 分钟）
+; 3) 果园任务版：签到 + 任务 accept/draw（2026 新接口，与浇水错开 5 分钟）
 cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js, timeout=120, tag=拼多多果园任务, enable=true
 
 [Mitm]
-hostname = %APPEND% *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
+hostname = %APPEND% mobile.yangkeduo.com, *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
