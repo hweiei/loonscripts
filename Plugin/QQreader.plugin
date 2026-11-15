@@ -1,12 +1,12 @@
 #!name = QQ阅读任务
-#!desc = v14（2026-11-16）：自动签到 / 宝箱视频 / 书架福利 / 等级广告 / 每周阅读 / 自定义任务
+#!desc = 插件 v15 / 脚本 v14 · 2026-11-16 05:12 · 自动签到 / 宝箱视频 / 书架福利 / 等级广告 / 每周阅读
 #!author = General
 #!icon = https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/QQ.png
 #!homepage = https://github.com/hweiei/loonscripts
 #!tag = 签到,工具
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 14
+#!version = 15
 
 [Script]
 cron "30 6 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, timeout=300, tag=QQ阅读任务, enable=true
