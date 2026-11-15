@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v14（2026-11-16 06:52）：修复首页响应解析——2026 版数据包在 user_manor_info 里，旧代码读顶层永远拿 undefined（水滴=0、tubetoken 不更新）；现在从 user_manor_info 取 uid/water/tubetoken 并自动回填存储，一次运行后永久有 uid，不用再抓 Cookie
+#!desc = v15（2026-11-16 06:56）：日志精简——对象一律单行截断（最多500字），首页/签到/任务只在出错时打原始响应，正常一次运行约20行，方便复制；通知里带任务统计。含 v14 的 user_manor_info 嵌套修复与 uid 自动回填
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 14
+#!version = 15
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
