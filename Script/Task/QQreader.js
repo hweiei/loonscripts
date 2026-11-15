@@ -40,6 +40,50 @@ cron "30 6 * * *" script-path=https://raw.githubusercontent.com/General74110/Scr
 hostname = *.reader.qq.com
 */
 const $ = new Env('QQ阅读');
+
+// ===================== 全局请求兜底 =====================
+// Loon 原生 timeout 对「连上了但服务端不回包」无效：回调永远不来，脚本就停在那行，
+// 连 finally 里的 $.done() 都执行不到（Loon 一直显示运行中）。
+// 这里劫持一次 $.get，给所有请求统一加 3s 看门狗，到点回调错误让流程继续往下走。
+(function () {
+  const rawGet = $.get.bind($);
+  $.get = function (opts, cb) {
+    let settled = false;
+    let timer = null;
+
+    const done = (err, resp, data) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { try { clearTimeout(timer); } catch (e) {} }
+      if (cb) cb(err, resp, data);
+    };
+
+    timer = setTimeout(() => done('timeout', null, ''), 3000);
+
+    try {
+      rawGet(opts, done);
+    } catch (e) {
+      done(String(e), null, '');
+    }
+  };
+})();
+
+// $.done 只允许生效一次，避免守卫和正常收尾重复调用
+(function () {
+  const rawDone = $.done.bind($);
+  $.done = function (t) {
+    if ($.__finished) return;
+    $.__finished = true;
+    rawDone(t);
+  };
+})();
+
+// 最后一道保险：无论卡在哪一步，15s 后强制收尾，Loon 不会一直转圈
+setTimeout(() => {
+  if ($.__finished) return;
+  try { console.log('\n⏱️ 全局守卫：超过 15s，强制结束'); } catch (e) {}
+  try { $.done({}); } catch (e) {}
+}, 15000);
 const zh_name = 'QQ阅读';
 const logs = 0;  // 设置0关闭日志, 1开启日志
 const notify = $.isNode() ? require('./sendNotify') : '';
@@ -92,7 +136,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v11（init 一次 + 全请求看门狗 2.5s）`);
+      console.log(`🔧 脚本版本: v12（宝箱 5/5 已通 + 全局收尾兜底）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
