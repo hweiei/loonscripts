@@ -862,7 +862,7 @@ async function BoxVideo(Cookie) {
         };
       }
       rewardsSummary[alive.awardType].total += alive.packageCount;
-      console.log(`✅ 领取成功 +${alive.packageCount}${alive.unit}`);
+      console.log(`✅ 领取成功 +${alive.packageCount} ${alive.unit}`);
     } else {
       if (result.code === -3) consecutiveDenied++;
       const errHint = result.code === -5 ? " (需要先看广告)" :
@@ -1083,7 +1083,7 @@ async function Msg() {
   if ($.videoRewards && Object.keys($.videoRewards).length > 0) {
     t += `【宝箱视频】领取详情:\n`;
     Object.values($.videoRewards).forEach(reward => {
-      t += `├─ ${reward.name} x${reward.total}${reward.unit}\n`;
+      t += `├─ ${reward.unit || reward.name} ×${reward.total}\n`;
     });
   } else {
     t += `【宝箱视频】今日无新礼物可领取\n`;
