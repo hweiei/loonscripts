@@ -23,52 +23,59 @@
  *   偷水 → 好友接口风控风险高，默认不碰
  */
 
-/* ==================== Loon 兼容层 ====================
- * 原文件是 Quantumult X 脚本，这里把三个 QuanX 专有对象映射到 Loon：
- *   $task.fetch  → $httpClient[get|post|put|delete]
- *   $prefs       → $persistentStore
- *   $notify      → $notification.post
- * 业务代码完全不动。
+/* ==================== Loon 适配层 v2 ====================
+ * 原文件是 Quantumult X 脚本，这里把 QuanX 专有对象接到 Loon：
+ *   $task.fetch → $httpClient[get|post|put|delete]
+ *   $prefs      → $persistentStore
+ *   $notify     → $notification.post
+ *
+ * ★ 关键：Loon 的这三个对象是运行时注入的变量，不一定是 globalThis 的属性。
+ *   所以一律用顶层 var 直接引用（同作用域可见），绝不走 window/globalThis。
  */
-(function (g) {
-    if (!g.$task) {
-        g.$task = {
-            fetch: function (opts) {
-                return new Promise(function (resolve, reject) {
-                    var m = String(opts.method || 'GET').toLowerCase();
-                    var fn = (g.$httpClient && g.$httpClient[m]) || (g.$httpClient && g.$httpClient.get);
-                    if (!fn) { reject('httpClient unavailable'); return; }
-                    fn(opts, function (err, resp, data) {
-                        if (err) { reject(String(err)); return; }
-                        var code = resp ? (resp.statusCode || resp.status || 0) : 0;
-                        resolve({
-                            statusCode: code,
-                            headers: (resp && resp.headers) || {},
-                            body: data
-                        });
-                    });
-                });
-            }
-        };
-    }
-    if (!g.$prefs) {
-        g.$prefs = {
-            valueForKey: function (k) {
-                try { return g.$persistentStore.read(k); } catch (e) { return null; }
-            },
-            setValueForKey: function (v, k) {
-                try { return g.$persistentStore.write(v, k); } catch (e) { return false; }
-            }
-        };
-    }
-    if (!g.$notify) {
-        g.$notify = function (t, s, b) {
-            try { g.$notification.post(t, s, b); } catch (e) { }
-        };
-    }
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+var __LOON_PS = (typeof $persistentStore !== 'undefined' && $persistentStore) || null;
+var __LOON_NT = (typeof $notification !== 'undefined' && $notification) || null;
+var __LOON_HC = (typeof $httpClient !== 'undefined' && $httpClient) || null;
 
-const VERSION = "v1.1.0-loon";
+function __safeDone(v) {
+    try { if (typeof $done === 'function') $done(v || {}); } catch (e) { }
+}
+
+var $prefs = {
+    valueForKey: function (k) {
+        try { return __LOON_PS ? __LOON_PS.read(k) : null; } catch (e) { return null; }
+    },
+    setValueForKey: function (v, k) {
+        try { return __LOON_PS ? __LOON_PS.write(v, k) : false; } catch (e) { return false; }
+    }
+};
+
+var $notify = function (title, subtitle, body) {
+    try {
+        if (__LOON_NT && typeof __LOON_NT.post === 'function') {
+            __LOON_NT.post(String(title || ''), String(subtitle || ''), String(body || ''));
+        }
+    } catch (e) { }
+};
+
+var $task = {
+    fetch: function (opts) {
+        return new Promise(function (resolve, reject) {
+            if (!__LOON_HC) { reject(new Error('$httpClient 不可用')); return; }
+            var method = String(opts.method || 'GET').toLowerCase();
+            var fn = (typeof __LOON_HC[method] === 'function') ? __LOON_HC[method] : __LOON_HC.get;
+            if (typeof fn !== 'function') { reject(new Error('$httpClient.' + method + ' 不存在')); return; }
+            var req = { url: opts.url, headers: opts.headers || {} };
+            if (opts.body !== undefined && opts.body !== null) req.body = opts.body;
+            fn.call(__LOON_HC, req, function (err, resp, data) {
+                if (err) { reject(new Error(String(err))); return; }
+                var code = resp ? (resp.statusCode || resp.status || 0) : 0;
+                resolve({ statusCode: code, headers: (resp && resp.headers) || {}, body: data });
+            });
+        });
+    }
+};
+
+const VERSION = "v1.1.0-loon.2";
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
 
@@ -81,21 +88,25 @@ const isRequest = (typeof $request !== "undefined") && $request
 // 跨平台存储适配器 (QuanX $prefs / Surge & Loon $persistentStore)
 const storage = {
   get: (key) => {
-    if (typeof $prefs !== "undefined") {
-      return $prefs.valueForKey(key);
+    if (__LOON_PS) {
+      try { const v = __LOON_PS.read(key); if (v !== null && v !== undefined) return v; } catch (e) { }
     }
-    if (typeof $persistentStore !== "undefined") {
-      return $persistentStore.read(key);
-    }
+    try {
+      if (typeof $prefs !== "undefined" && $prefs && typeof $prefs.valueForKey === "function") {
+        return $prefs.valueForKey(key);
+      }
+    } catch (e) { }
     return null;
   },
   set: (val, key) => {
-    if (typeof $prefs !== "undefined") {
-      return $prefs.setValueForKey(val, key);
+    if (__LOON_PS) {
+      try { return __LOON_PS.write(val, key); } catch (e) { }
     }
-    if (typeof $persistentStore !== "undefined") {
-      return $persistentStore.write(val, key);
-    }
+    try {
+      if (typeof $prefs !== "undefined" && $prefs && typeof $prefs.setValueForKey === "function") {
+        return $prefs.setValueForKey(val, key);
+      }
+    } catch (e) { }
     return false;
   }
 };
@@ -135,7 +146,7 @@ function stringifyCookieMap(map) {
 function getCookie() {
   log(`>>> 拦截到 yangkeduo 请求 (${VERSION}) <<<`);
   if (!$request || !$request.headers) {
-    $done({});
+    __safeDone({});
     return;
   }
 
@@ -197,7 +208,7 @@ function getCookie() {
     log("[提示] Cookie 凭据持续累积中，尚缺少 PDDAccessToken...");
   }
 
-  $done({});
+  __safeDone({});
 }
 
 // ===== 2. 封装 QuanX 原生 HTTP 请求 =====
@@ -513,36 +524,63 @@ async function stealFromFriends(pdduid, cookieStr, tubetoken) {
 async function main() {
   log(`>>> 开始执行拼多多果园定时任务 (${VERSION}) <<<`);
 
-  const cookieStr = storage.get("pdd_orchard_cookie");
+  // ---- 启动自检：环境对象是否就位 ----
+  log(`[自检] persistentStore=${__LOON_PS ? "ok" : "缺失"} notification=${__LOON_NT ? "ok" : "缺失"} httpClient=${__LOON_HC ? "ok" : "缺失"} done=${typeof $done === "function" ? "ok" : "缺失"}`);
+
+  // ---- 启动自检：每个存储键的命中情况 ----
+  const probe = ["pdd_orchard_cookie", "pdd_orchard_uid", "pdd_orchard_tubetoken", "ddgyck", "ddgyuid"];
+  const probeOut = probe.map(k => {
+    const v = storage.get(k);
+    return `${k}=${v ? (String(v).length + "字节") : "空"}`;
+  }).join(" | ");
+  log(`[自检] ${probeOut}`);
+
+  let cookieStr = storage.get("pdd_orchard_cookie");
   let pdduid = storage.get("pdd_orchard_uid");
   let tubetoken = storage.get("pdd_orchard_tubetoken") || "";
 
+  // ---- 兜底 1：没有完整 Cookie 时，用 ddgyck（纯 token）拼最小 Cookie ----
   if (!cookieStr) {
-    $notify(`拼多多果园 ${VERSION} ❌`, "未找到 Cookie", "请在【微信】中打开拼多多小程序，进入多多果园抓取！");
-    $done({}); return;
+    const rawTok = storage.get("ddgyck");
+    if (rawTok) {
+      const tk = String(rawTok).replace(/^PDDAccessToken\s*=\s*/i, "").trim();
+      const ud = pdduid || storage.get("ddgyuid") || storage.get("pdd_user_id") || "";
+      if (tk) {
+        cookieStr = "PDDAccessToken=" + tk + (ud ? "; pdd_user_id=" + ud : "");
+        log(`[兜底] 用 ddgyck 重建 Cookie（token ${tk.slice(0, 8)}…，uid ${ud || "缺"}）`);
+      }
+    }
+  }
+
+  if (!cookieStr) {
+    log(`[终止] 没有任何凭据。请在拼多多 App / 微信小程序里进入「多多果园」逛一次，让抓取规则存下 Cookie。`);
+    $notify(`拼多多果园 ${VERSION} ❌`, "没有凭据", "打开拼多多 → 多多果园 点一下\n看到「凭据已就绪」通知后再跑");
+    __safeDone({}); return;
   }
 
   if (!pdduid) {
-    const m = cookieStr.match(/pdd_user_id=(\d+)/);
+    const m = String(cookieStr).match(/pdd_user_id=(\d+)/);
     if (m) pdduid = m[1];
   }
 
   if (!pdduid) {
-    $notify(`拼多多果园 ${VERSION} ❌`, "Cookie 无效", "缺失 pdd_user_id，请在微信打开多多果园重新抓取");
-    $done({}); return;
+    log(`[终止] Cookie 里有 token 但没有 pdd_user_id（${String(cookieStr).length} 字节）。`);
+    $notify(`拼多多果园 ${VERSION} ❌`, "缺少 pdd_user_id", "新接口必须带 pdd_user_id\n请在拼多多 → 多多果园 重新抓一次");
+    __safeDone({}); return;
   }
 
   if (cookieStr.indexOf("PDDAccessToken") === -1) {
-    $notify(`拼多多果园 ${VERSION} ⚠️`, "凭据不完整", "缺少 PDDAccessToken！请在微信中打开拼多多小程序进入果园，等待抓取完整提示！");
-    $done({}); return;
+    log(`[终止] Cookie 里缺少 PDDAccessToken。`);
+    $notify(`拼多多果园 ${VERSION} ⚠️`, "凭据不完整", "缺少 PDDAccessToken\n请在拼多多 → 多多果园 重新抓一次");
+    __safeDone({}); return;
   }
 
-  log(`[初始化] UID: ${pdduid}`);
+  log(`[初始化] UID: ${pdduid} | Cookie ${String(cookieStr).length} 字节`);
 
   const { newToken, water: startWater } = await getHomePage(pdduid, cookieStr, tubetoken);
   if (newToken === null) {
     $notify(`拼多多果园 ${VERSION} ❌`, "Cookie 已失效", "请在微信中重新进入多多果园抓取最新凭据");
-    $done({}); return;
+    __safeDone({}); return;
   }
   if (newToken && newToken !== tubetoken) {
     tubetoken = newToken;
@@ -563,7 +601,7 @@ async function main() {
   const msg = `UID: ${pdduid}\n水滴: ${startWater} → ${finalWater}\n任务: +${claimedWater}g | 签到: ${checkinOk ? "已签" : "未签"}`;
   log("--- [6/6] 完成 ---", msg);
   $notify(`拼多多果园 ${VERSION} 🎉`, `水滴余额: ${finalWater}`, msg);
-  $done({});
+  __safeDone({});
 }
 
 // ===== 5. 入口 =====
@@ -573,6 +611,6 @@ if (isRequest) {
   main().catch(err => {
     log("[致命错误]", err);
     $notify(`拼多多果园 ${VERSION} ❌`, "运行异常", String(err));
-    $done({});
+    __safeDone({});
   });
 }
