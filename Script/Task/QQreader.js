@@ -73,8 +73,9 @@ if (ckStr) {
         ).toLocaleString()} ===============================================\n`
     );
 
-    if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken && cookieData.csigs) {
-      globalCookie = buildCookie(cookieData.ywguid, cookieData.ywkey, cookieData.ywtoken, cookieData.csigs);
+    // 注意：csigs 缺失时也要生成 Cookie，否则会带着空 Cookie 跑完全部任务
+    if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
+      globalCookie = buildCookie(cookieData.ywguid, cookieData.ywkey, cookieData.ywtoken, cookieData.csigs || '');
     }
 
     if (logs == 1) {
@@ -84,7 +85,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v6（单次 scan + -3 补扫重试 + 请求超时保护）`);
+      console.log(`🔧 脚本版本: v6.1（单次 scan + -3 补扫重试 + 请求超时保护）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -171,6 +172,10 @@ if (ckStr) {
       // 14. 发送任务总结
       await $.wait(1000);
       await Msg();
+    } else {
+      // 没有 Cookie 时必须明确报出来，否则表现为“脚本跑了但什么都没做”
+      console.log('❌ 未获取到 Cookie：请打开 QQ阅读 App →「我的」页面，触发插件抓取');
+      $.msg(zh_name, '', '未获取到 Cookie，请先打开 QQ阅读 App 的「我的」页面');
     }
   }
 })()
@@ -264,15 +269,24 @@ function GetCookies() {
   const ywtoken = $request.headers['ywtoken'];
   const csigs = $request.headers['csigs'];
 
+  // 关键：部分 userinfo 请求不带登录态字段，若无条件写入会把已有 Cookie 覆盖成空
+  if (!ywkey || !ywguid || !ywtoken) {
+    console.log('⚠️ 本次请求未携带登录信息，保留原有 Cookie 不变');
+    $.done({});
+    return;
+  }
+
   const obj = {
-    ywkey: ywkey || '',
-    ywguid: ywguid || '',
-    ywtoken: ywtoken || '',
+    ywkey: ywkey,
+    ywguid: ywguid,
+    ywtoken: ywtoken,
     csigs: csigs || ''
   };
   $.setdata(JSON.stringify(obj), 'QQYD_COOKIE');
   $.log(`获取到的 QQYD_COOKIE: ${JSON.stringify(obj)}`);
   $.msg($.name, "", `QQ阅读获取 Cookie 成功`);
+  // 关键：http-request 脚本必须 done，否则该请求会一直挂起到超时
+  $.done({});
 }
 
 // ===================== 用户信息检测 =====================
