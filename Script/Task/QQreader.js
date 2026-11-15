@@ -48,6 +48,14 @@ const $ = new Env('QQ阅读');
 (function () {
   const rawGet = $.get.bind($);
   $.get = function (opts, cb) {
+    // 每条请求用完即关连接：宝箱阶段会连发十几个请求，keep-alive 连接堆积后
+    // 后续请求会全排在池子里等，表现出来就是「连上了不回包、整个脚本卡死」
+    try {
+      if (opts && typeof opts === 'object') {
+        opts.headers = opts.headers || {};
+        opts.headers['Connection'] = 'close';
+      }
+    } catch (e) {}
     let settled = false;
     let timer = null;
 
@@ -136,7 +144,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v12（宝箱 5/5 已通 + 全局收尾兜底）`);
+      console.log(`🔧 脚本版本: v13（宝箱 2s + 收尾不阻塞）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -155,73 +163,54 @@ if (ckStr) {
       }
 
       // 2. 签到
-      await $.wait(1000);
+      await $.wait(300);
       await CheckinSign(globalCookie);
 
       // 3. 阅读时间任务
-      await $.wait(1000);
+      await $.wait(300);
       await ReadTime(globalCookie);
 
       // 4. 每周阅读进度查询
-      await $.wait(1000);
+      await $.wait(300);
       await WeekReadTime(globalCookie);
 
       // 5. 听书奖励
-      await $.wait(1000);
+      await $.wait(300);
       await GetAwardlistenTime(globalCookie);
 
       // 6. 每日听书30分钟
-      await $.wait(1000);
+      await $.wait(300);
       await ReceiveListenTime(globalCookie);
 
       // 7. 宝箱视频任务（扫描+领取）
-      await $.wait(1000);
+      await $.wait(300);
       await BoxVideo(globalCookie);
 
-      // 8. 等级广告视频任务 (adPositionId=18)
-      await $.wait(1000);
-      await QuerVideo(globalCookie, 18);
+      // 8-13. 宝箱之后的任务改为「发出即走」：这些接口在连续十几个宝箱请求之后
+      // 经常连上就不回包，一旦 await 就会把整个脚本拖死（Loon 的 timeout 和
+      // setTimeout 对「连接已建立但服务端不响应」都不生效，$.done() 永远执行不到）。
+      // 请求照样发出、服务端照样处理，只是本地不等回执。
+      QuerVideo(globalCookie, 18);
 
-      // 9. 等级广告视频任务 (adPositionId=50)
-      await $.wait(500);
-      await QuerVideo(globalCookie, 50);
-
-      // 15. 抽奖逻辑
       const currentDay = new Date().getDay();
       const currentDate = new Date().getDate();
 
-      if (currentDay === 0) {
-        await GetAwardWeek(globalCookie); // 周抽奖
+      if (currentDay === 0) GetAwardWeek(globalCookie);          // 周抽奖
+      if (currentDate === 15) GetAwardMonth(globalCookie);       // 月抽奖
+      if (currentDate === 1) {                                   // 等级福利
+        Reward(globalCookie);
+        Rewardq(globalCookie);
+        RewardVip(globalCookie);
       }
 
-      if (currentDate === 15) {
-        await GetAwardMonth(globalCookie); // 月抽奖 签到满10天可抽奖一次
-      }
+      BookShelfWelfare(globalCookie);
+      SignInInfo(globalCookie);
+      CustomTaskList(globalCookie);
+      PersonalInfo(globalCookie);
 
-      if (currentDate === 1) {
-        await Reward(globalCookie);     // 等级福利-赠币
-        await Rewardq(globalCookie);    // 等级福利-听书券
-        await RewardVip(globalCookie);  // 等级福利-体验会员
-      }
-
-      // 10. 书架福利
-      await $.wait(800);
-      await BookShelfWelfare(globalCookie);
-
-      // 11. 签到信息
+      // 14. 给刚发出的请求留 500ms 收回执（此时还没进入挂起状态，定时器是可靠的），
+      //     然后立即出通知收尾，不再等那些可能永远不回包的接口
       await $.wait(500);
-      await SignInInfo(globalCookie);
-
-      // 12. 自定义任务列表
-      await $.wait(500);
-      await CustomTaskList(globalCookie);
-
-      // 13. 个人信息/阅读总时长
-      await $.wait(500);
-      await PersonalInfo(globalCookie);
-
-      // 14. 发送任务总结
-      await $.wait(1000);
       await Msg();
     }
   }
