@@ -85,7 +85,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v6.1（单次 scan + -3 补扫重试 + 请求超时保护）`);
+      console.log(`🔧 脚本版本: v7（队列化 + 原生超时 + 连续超时熔断）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -772,50 +772,66 @@ async function BoxVideo(Cookie) {
     return;
   }
 
+  const gifts = $.availableGifts;
+  const total = gifts.length;
+  const REQ_TIMEOUT = 10000;                    // 单请求 10s，由 $httpClient 原生超时兜底
+  const deadline = Date.now() + 8 * 60 * 1000;  // 整个宝箱阶段的预算，防止拖垮整个脚本
   const rewardsSummary = {};
   let successCount = 0;
+  let consecutiveTimeout = 0;
 
-  console.log(`\n📦 发现 ${$.availableGifts.length} 个可领取礼物`);
+  console.log(`\n📦 发现 ${total} 个可领取礼物，逐个领取（单请求 ${REQ_TIMEOUT / 1000}s 超时）`);
 
   // scan 只做一次：频繁调用会让服务端把后续 getGift 挂起（实测每个宝箱 scan 会导致第一个也领不到）
   const tScan = Date.now();
-  const scanRes = await withTimeout(ScanVideo(Cookie, 0), 12000, 'scan');
+  const scanRes = await withTimeout(ScanVideo(Cookie, 0), REQ_TIMEOUT + 3000, 'scan');
   console.log(`   ⏱ scan 耗时 ${Date.now() - tScan}ms`);
   if (!scanRes || scanRes.code !== 0) {
     console.log('   ⚠️ 扫描未成功，仍继续尝试领取');
   }
-  await sleep(1000);
+  await sleep(800);
 
-  for (let i = 0; i < $.availableGifts.length; i++) {
-    const gift = $.availableGifts[i];
-    console.log(`\n🎁 正在领取 ${i+1}/${$.availableGifts.length}: ${gift.giftName} x${gift.packageCount}`);
+  for (let i = 0; i < total; i++) {
+    // 队列控制一：超出总预算就收尾，别让后面的宝箱把整个任务拖到超时
+    if (Date.now() > deadline) {
+      console.log(`\n⏰ 已达时间预算，剩余 ${total - i} 个宝箱跳过`);
+      break;
+    }
+    // 队列控制二：连续无响应说明服务端在挂请求，继续试也只是白等
+    if (consecutiveTimeout >= 3) {
+      console.log(`\n⛔ 连续 ${consecutiveTimeout} 个请求无响应，服务端在挂起，停止本轮`);
+      break;
+    }
+
+    const gift = gifts[i];
+    console.log(`\n🎁 ${i + 1}/${total}: ${gift.giftName}${gift.packageCount ? ' ×' + gift.packageCount : ''}`);
+    console.log(`   ⏳ 请求领取...`);
 
     const tGift = Date.now();
     let result = await withTimeout(
       runBoxVideo(Cookie, gift.giftId, i + 1, 0),
-      15000,
+      REQ_TIMEOUT + 2000,
       `getGift#${i+1}`
     );
-    console.log(`   ⏱ getGift 耗时 ${Date.now() - tGift}ms → code=${result.code}`);
+    console.log(`   ↳ ${Date.now() - tGift}ms  code=${result.code}`);
+    consecutiveTimeout = result.code === -998 ? consecutiveTimeout + 1 : 0;
 
-    // -3（视频未看完）：补扫一次拿新资格，等待后重试，最多 2 轮
-    for (let retry = 1; retry <= 2 && result.code === -3; retry++) {
-      console.log(`   ↻ 视频未看完(-3)，第 ${retry} 次补扫后重试`);
-      const rScan = await withTimeout(ScanVideo(Cookie, 0), 12000, `rescan#${i+1}`);
-      if (!rScan || rScan.code !== 0) {
-        console.log('   ⚠️ 补扫未通过，停止该宝箱重试');
-        break;
+    // 只有 -3（视频未看完）才补扫，最多 1 次，避免每个失败都多花 20 秒
+    if (result.code === -3) {
+      console.log('   ↻ 视频未看完(-3)，补扫一次后重试');
+      const rScan = await withTimeout(ScanVideo(Cookie, 0), REQ_TIMEOUT + 3000, `rescan#${i+1}`);
+      if (rScan && rScan.code === 0) {
+        await sleep(4000);   // 留出「观看时长」，太快会被判为未看完
+        result = await withTimeout(
+          runBoxVideo(Cookie, gift.giftId, i + 1, 1),
+          REQ_TIMEOUT + 2000,
+          `getGift#${i+1}-r1`
+        );
+        console.log(`   ↳ 重试 code=${result.code}`);
+        if (result.code !== -998) consecutiveTimeout = 0;
+      } else {
+        console.log('   ⚠️ 补扫未通过，跳过该宝箱');
       }
-      await sleep(6000);   // 留出「观看时长」，太快会被判为未看完
-      const tRetry = Date.now();
-      result = await withTimeout(
-        runBoxVideo(Cookie, gift.giftId, i + 1, retry),
-        15000,
-        `getGift#${i+1}-r${retry}`
-      );
-      console.log(`   ⏱ 重试耗时 ${Date.now() - tRetry}ms → code=${result.code}`);
-      if (result.code !== -3) break;
-      await sleep(2000);
     }
 
     if (result.code === 0) {
@@ -836,11 +852,11 @@ async function BoxVideo(Cookie) {
       console.log(`❌ 领取失败 [${result.code}]: ${result.msg || '未知错误'}${errHint}`);
     }
 
-    await sleep(3000);   // 宝箱之间留间隔，避免连续请求被风控
+    await sleep(1200);
   }
 
   $.videoRewards = rewardsSummary;
-  console.log(`\n📊 宝箱视频任务完成: 成功 ${successCount}/${$.availableGifts.length}`);
+  console.log(`\n📊 宝箱视频任务完成: 成功 ${successCount}/${total}`);
 }
 
 async function runBoxVideo(Cookie, giftId, attempt, round) {
@@ -857,6 +873,11 @@ async function runBoxVideo(Cookie, giftId, attempt, round) {
     };
 
     $.get(Url, async (err, resp, data) => {
+      if (err) {
+        console.log(`   ⚠️ ${label} 请求失败: ${err}`);
+        resolve({ code: -998, msg: '请求超时/失败' });
+        return;
+      }
       if (logs == 1) {
         console.log(`${label} 请求状态码: ${resp?.status}`);
         console.log(`原始响应: ${data}`);
@@ -1275,6 +1296,9 @@ function Env(t, e) {
       void 0 === t.headers.Cookie && void 0 === t.cookieJar && (t.cookieJar = this.ckjar));
     }
     get(t, e = () => { }) {
+      // Loon/Surge 的 $httpClient 原生支持 timeout（秒）。
+      // 不设的话，服务端不返回时回调永远不触发，JS 侧的 setTimeout 兜不住。
+      t && 'object' == typeof t && void 0 === t.timeout && (t.timeout = 12);
       switch (
           (t.headers && (delete t.headers['Content-Type'], delete t.headers['Content-Length'], delete t.headers['content-type'], delete t.headers['content-length']),
           t.params && (t.url += '?' + this.queryStr(t.params)),
@@ -1296,6 +1320,7 @@ function Env(t, e) {
       }
     }
     post(t, e = () => { }) {
+      t && 'object' == typeof t && void 0 === t.timeout && (t.timeout = 12);
       const s = t.method ? t.method.toLocaleLowerCase() : 'post';
       switch (
           (t.body && t.headers && !t.headers['Content-Type'] && !t.headers['content-type'] && (t.headers['content-type'] = 'application/x-www-form-urlencoded'),
