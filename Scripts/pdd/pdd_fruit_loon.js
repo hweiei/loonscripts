@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.3";
+const VERSION = "v1.1.0-loon.4";
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
 
@@ -277,10 +277,15 @@ async function getHomePage(pdduid, cookieStr, tubetoken) {
       log("[错误] 40001 - Cookie 无效或 PDDAccessToken 缺失/过期！");
       return { newToken: null, water: 0 };
     }
-    const newToken = res ? (res.tubetoken || tubetoken) : tubetoken;
-    const water = res ? (res.water_amount || 0) : 0;
-    log(`[首页成功] 水滴: ${water}, TubeToken: ${newToken ? newToken.slice(0, 10) + '...' : '无'}`);
-    return { newToken, water };
+    // 2026 版把真实数据包在 user_manor_info 里，顶层只有 server_time。
+    // 旧逻辑直接读 res.water_amount / res.tubetoken 永远拿到 undefined。
+    const info = (res && res.user_manor_info) || res || {};
+    const realUid = info.uid || (res && res.uid) || null;
+    const newToken = info.tubetoken || (res && res.tubetoken) || tubetoken;
+    const water = (typeof info.water_amount === 'number') ? info.water_amount
+                : ((res && typeof res.water_amount === 'number') ? res.water_amount : 0);
+    log(`[首页成功] uid: ${realUid || '未返回'} | 水滴: ${water} | TubeToken: ${newToken ? String(newToken).slice(0, 10) + '...' : '无'}`);
+    return { newToken, water, uid: realUid };
   } catch (e) {
     log("[首页异常]", e);
     return { newToken: null, water: 0 };
@@ -578,7 +583,17 @@ async function main() {
 
   log(`[初始化] UID: ${pdduid} | Cookie ${String(cookieStr).length} 字节`);
 
-  const { newToken, water: startWater } = await getHomePage(pdduid, cookieStr, tubetoken);
+  const { newToken, water: startWater, uid: realUid } = await getHomePage(pdduid, cookieStr, tubetoken);
+  if (realUid && String(realUid) !== String(pdduid)) {
+    pdduid = String(realUid);
+    storage.set(pdduid, "pdd_orchard_uid");
+    storage.set(pdduid, "ddgyuid");
+    if (String(cookieStr).indexOf("pdd_user_id") === -1) {
+      cookieStr = String(cookieStr) + "; pdd_user_id=" + pdduid;
+      storage.set(cookieStr, "pdd_orchard_cookie");
+    }
+    log(`[回填] 从响应拿到真实 uid=${pdduid}，已写入存储，下次启动不再为空`);
+  }
   if (newToken === null) {
     $notify(`拼多多果园 ${VERSION} ❌`, "Cookie 已失效", "请在微信中重新进入多多果园抓取最新凭据");
     __safeDone({}); return;
