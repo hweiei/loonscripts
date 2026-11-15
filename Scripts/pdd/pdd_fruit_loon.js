@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.2";
+const VERSION = "v1.1.0-loon.3";
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
 
@@ -564,9 +564,10 @@ async function main() {
   }
 
   if (!pdduid) {
-    log(`[终止] Cookie 里有 token 但没有 pdd_user_id（${String(cookieStr).length} 字节）。`);
-    $notify(`拼多多果园 ${VERSION} ❌`, "缺少 pdd_user_id", "新接口必须带 pdd_user_id\n请在拼多多 → 多多果园 重新抓一次");
-    __safeDone({}); return;
+    // 实测：接口只校验 Cookie 里的 PDDAccessToken，pdduid 传空/不传都只回 40001（登录失效），
+    // 不会因为缺 pdduid 报参数错误。所以这里不再硬性终止，先跑，跑通了再回填 uid。
+    pdduid = "";
+    log(`[警告] 没有 pdd_user_id，用空值继续（服务端只认 PDDAccessToken，不影响领取）`);
   }
 
   if (cookieStr.indexOf("PDDAccessToken") === -1) {
