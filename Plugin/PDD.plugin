@@ -1,0 +1,13 @@
+#!name = 拼多多果园 Token 抓取
+#!desc = 自动抓取 PDDAccessToken 并写入 ddgyck，供多多果园脚本读取。抓到一次后可以关闭本插件。
+#!author = hweiei
+#!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
+#!tag = 工具
+#!system = iOS,iPadOS
+#!version = 1
+
+[Script]
+http-request ^https?:\/\/[^\/]*(yangkeduo|pinduoduo)\.com\/ script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_getToken.js, requires-body=false, timeout=10, tag=拼多多Token抓取, enable=true
+
+[MitM]
+hostname = %APPEND% *.yangkeduo.com, *.pinduoduo.com
