@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v13（2026-11-16 06:45）：实测拼多多只校验 Cookie 里的 PDDAccessToken（无 uid 也返回 40001 登录失效，不是缺参数），因此取消 pdd_user_id 硬性拦截，缺 uid 用空值继续跑。抓不到凭据时先跑一次看接口返回，再决定是否重抓
+#!desc = v14（2026-11-16 06:52）：修复首页响应解析——2026 版数据包在 user_manor_info 里，旧代码读顶层永远拿 undefined（水滴=0、tubetoken 不更新）；现在从 user_manor_info 取 uid/water/tubetoken 并自动回填存储，一次运行后永久有 uid，不用再抓 Cookie
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 13
+#!version = 14
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
