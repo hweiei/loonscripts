@@ -19,6 +19,26 @@ export ddgyck="xxxxx"
  * 这里用 $httpClient 实现 request 的常用子集（get / post / put / delete），
  * 保持 (err, resp, body) 回调语义，让原逻辑不用改。
  */
+/* 存储清洗：果园脚本把 ddgyck 的值原样塞进 accesstoken 请求头，
+   所以这里必须是纯 token。早期抓取脚本写进去的是 "PDDAccessToken=xxx"，
+   直接发出去会被服务端判无效，这里统一剥掉前缀（兼容旧数据和多账号 @ 分隔）。 */
+(function () {
+  try {
+    if (typeof $persistentStore === 'undefined' || !$persistentStore) return;
+    var rawRead = $persistentStore.read;
+    if (typeof rawRead !== 'function') return;
+    $persistentStore.read = function (k) {
+      var v = rawRead.apply($persistentStore, arguments);
+      if (k === 'ddgyck' && typeof v === 'string' && v) {
+        v = v.split('@').map(function (x) {
+          return x.replace(/^\s*PDDAccessToken\s*=\s*/i, '').replace(/[\s;]+$/, '');
+        }).join('@');
+      }
+      return v;
+    };
+  } catch (e) {}
+})();
+
 var require = (function () {
   var hasOwn = Object.prototype.hasOwnProperty;
 
@@ -154,18 +174,12 @@ var require = (function () {
 })();
 /* =============== 兼容层结束 =============== */
 
-/* 兜底收尾：脚本要串行发几十个请求，万一有一条永久挂起，
-   到点主动 $done，避免 Loon 一直显示「运行中」直到插件超时被杀 */
 (function () {
   var raw = (typeof $done === 'function') ? $done : null;
   if (!raw) return;
   var hit = false;
   try {
-    $done = function (t) {
-      if (hit) return;
-      hit = true;
-      return raw(t);
-    };
+    $done = function (t) { if (hit) return; hit = true; return raw(t); };
   } catch (e) {}
   setTimeout(function () {
     if (hit) return;
