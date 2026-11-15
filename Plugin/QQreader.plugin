@@ -5,10 +5,10 @@
 #!homepage = https://github.com/hweiei/loonscripts
 #!tag = 签到,工具
 #!system = iOS,iPadOS
-#!version = 6
+#!version = 8
 
 [Script]
-cron "30 6 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, tag=QQ阅读任务, enable=true, timeout=600
+cron "30 6 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, tag=QQ阅读任务, enable=true, timeout=1200
 http-request ^https:\/\/iostgw\.reader\.qq\.com\/.*userinfo script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Script/Task/QQreader.js, requires-body=false, timeout=10, tag=QQ阅读获取Cookies, enable=true, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/QQ.png
 
 [MitM]
