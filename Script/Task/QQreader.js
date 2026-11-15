@@ -85,7 +85,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v7.1（队列化 + 熔断，已移除不兼容的 timeout 参数）`);
+      console.log(`🔧 脚本版本: v7.2（队列化 + 15s 请求超时 + 连续熔断）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -733,6 +733,7 @@ async function ScanVideo(Cookie, mark = 0) {
   return new Promise((resolve) => {
     let Url = {
       url: `https://ih5.reader.qq.com/api/comAds/scan?mark=${mark}&scene=1`,
+      timeout: 15000,   // Loon 单位是毫秒
       headers: {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
@@ -864,6 +865,7 @@ async function runBoxVideo(Cookie, giftId, attempt, round) {
   return new Promise((resolve) => {
     const Url = {
       url: `https://ih5.reader.qq.com/api/comAds/getGift?giftId=${giftId}&scene=1`,
+      timeout: 15000,   // Loon 单位是毫秒，默认仅 5000
       headers: {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
