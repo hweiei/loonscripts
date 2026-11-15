@@ -117,7 +117,7 @@ if (ckStr) {
   try {
     cookieData = JSON.parse(ckStr);
   } catch (e) {
-    console.log('❌ 解析 QQYD_COOKIE 出错:', e);
+    console.log(`❌ 解析 QQYD_COOKIE 出错: ${e}`);
   }
 }
 
@@ -156,7 +156,7 @@ if (ckStr) {
         } else if ($.isLoon() || $.isQuanX() || $.isSurge()) {
           $.msg(zh_name, "", content);
         } else {
-          console.log(zh_name, content);
+          console.log(`${zh_name} ${content}`);
         }
         $.done();
         return;
