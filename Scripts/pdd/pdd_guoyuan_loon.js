@@ -19,9 +19,11 @@ export ddgyck="xxxxx"
  * 这里用 $httpClient 实现 request 的常用子集（get / post / put / delete），
  * 保持 (err, resp, body) 回调语义，让原逻辑不用改。
  */
-/* 存储清洗：果园脚本把 ddgyck 的值原样塞进 accesstoken 请求头，
-   所以这里必须是纯 token。早期抓取脚本写进去的是 "PDDAccessToken=xxx"，
-   直接发出去会被服务端判无效，这里统一剥掉前缀（兼容旧数据和多账号 @ 分隔）。 */
+
+/* --- 存储清洗：ddgyck 必须是纯 token ---
+   果园脚本把这个值原样塞进 accesstoken 请求头，早期抓取脚本写进去的是
+   "PDDAccessToken=xxx"，直接发出去会被服务端判无效。这里统一剥掉前缀，
+   兼容旧数据和 @ 分隔的多账号。 */
 (function () {
   try {
     if (typeof $persistentStore === 'undefined' || !$persistentStore) return;
@@ -38,6 +40,9 @@ export ddgyck="xxxxx"
     };
   } catch (e) {}
 })();
+
+/* 版本标记：日志里出现这行就说明跑的是带批量浇水的新版 */
+try { console.log('🔧 果园兼容层 v3（一键连浇，浇到 100g 保留线）'); } catch (e) {}
 
 var require = (function () {
   var hasOwn = Object.prototype.hasOwnProperty;
@@ -97,60 +102,138 @@ var require = (function () {
     };
   }
 
+  /* ---- 单次发送 ---- */
+  function fire(o, cb) {
+    var settled = false;
+    var guard = null;
+
+    function finish(err, resp, data) {
+      if (settled) return;
+      settled = true;
+      if (guard !== null) {
+        try { clearTimeout(guard); } catch (e) {}
+      }
+      if (typeof cb !== 'function') return;
+      var code = (resp && (resp.statusCode || resp.status)) || 0;
+      try {
+        cb(err || null, {
+          statusCode: code,
+          status: code,
+          headers: (resp && resp.headers) || {},
+          body: data
+        }, data);
+      } catch (e) {
+        try { console.log('【request】回调异常: ' + e); } catch (e2) {}
+      }
+    }
+
+    // Loon 对「TCP 已连上、服务端不回包」的请求，原生 timeout 不触发，
+    // 回调永远不来。这里加 JS 看门狗，到点按超时回调，流程继续。
+    guard = setTimeout(function () {
+      finish(new Error('request timeout: ' + o.timeout + 'ms'));
+    }, o.timeout + 3000);
+
+    var req = { url: o.url, headers: o.headers, timeout: o.timeout };
+    if (o.body !== undefined && o.body !== null && o.body !== '') {
+      req.body = o.body;
+    }
+
+    var fn;
+    if (o.method === 'POST') fn = $httpClient.post;
+    else if (o.method === 'PUT') fn = $httpClient.put;
+    else if (o.method === 'DELETE') fn = $httpClient.delete;
+    else fn = $httpClient.get;
+
+    // Loon 只保证 get / post，其它方法一律降级为 post
+    if (typeof fn !== 'function') fn = $httpClient.post;
+
+    try {
+      fn(req, function (err, resp, data) {
+        if (err) finish(err);
+        else finish(null, resp, data);
+      });
+    } catch (e) {
+      finish(e);
+    }
+  }
+
+  /* ---- 批量浇水 ----
+   * App 里的「一键浇水 10 次 / 20 次」是前端连着调 manor/water/cost，
+   * 服务端没有独立的批量接口。这里做同一件事：一次调用连浇到保留线以下，
+   * 脚本只等一次回执，省掉脚本自己一轮一轮等的时间。
+   */
+  var WATER_KEEP = 100;   // 与脚本自身策略一致：低于 100g 留到明天
+  var WATER_MAX = 80;     // 单次最多 80 下，水滴再多也不会把脚本拖过插件超时
+  var WATER_GAP = 180;    // 每下间隔，约等于 App 连点节奏
+
+  function isWaterCost(url) {
+    return /\/manor\/water\/cost(\?|$)/.test(String(url || ''));
+  }
+
+  function waterLeftOf(body) {
+    var obj;
+    try { obj = JSON.parse(body); } catch (e) { return null; }
+    if (!obj || typeof obj !== 'object') return null;
+    if (obj.error_code && obj.error_code !== 0) return null;
+    var v = obj.now_water_amount;
+    if (v === undefined && obj.result && typeof obj.result === 'object') v = obj.result.now_water_amount;
+    if (v === undefined) v = obj.water_amount;
+    var n = Number(v);
+    return isNaN(n) ? null : n;
+  }
+
+  function waterBatch(o, cb) {
+    var last = null, done = false, times = 0, stale = 0, prev = null;
+
+    function finish() {
+      if (done) return;
+      done = true;
+      if (last) cb(last.err, last.resp, last.data);
+      else cb(new Error('water batch failed'));
+    }
+
+    function step() {
+      if (done) return;
+      fire(o, function (err, resp, data) {
+        if (done) return;
+        times++;
+        last = { err: err, resp: resp, data: data };
+        if (err) return finish();
+
+        var left = waterLeftOf(data);
+        if (left === null) {
+          if (times === 1) { try { console.log('💧 批量浇水：响应里没有水量字段，按单次处理'); } catch (e) {} }
+          return finish();
+        }
+        try { console.log('💧 浇水 ' + times + ' 次，剩余 ' + left + 'g'); } catch (e) {}
+
+        if (left < WATER_KEEP) return finish();
+        if (times >= WATER_MAX) {
+          try { console.log('💧 已浇 ' + WATER_MAX + ' 次，还剩 ' + left + 'g，下次继续'); } catch (e) {}
+          return finish();
+        }
+        if (prev !== null && left === prev) {
+          stale++;
+          if (stale >= 3) {
+            try { console.log('💧 水量连续 ' + stale + ' 次没变化，停止批量浇水'); } catch (e) {}
+            return finish();
+          }
+        } else {
+          stale = 0;
+        }
+        prev = left;
+        setTimeout(step, WATER_GAP);
+      });
+    }
+
+    step();
+  }
+
   function send(method) {
     return function (opts, cb) {
       var o = build(opts, method);
-      var settled = false;
-      var guard = null;
-
-      function finish(err, resp, data) {
-        if (settled) return;
-        settled = true;
-        if (guard !== null) {
-          try { clearTimeout(guard); } catch (e) {}
-        }
-        if (typeof cb !== 'function') return;
-        var code = (resp && (resp.statusCode || resp.status)) || 0;
-        try {
-          cb(err || null, {
-            statusCode: code,
-            status: code,
-            headers: (resp && resp.headers) || {},
-            body: data
-          }, data);
-        } catch (e) {
-          try { console.log('【request】回调异常: ' + e); } catch (e2) {}
-        }
-      }
-
-      // Loon 对「TCP 已连上、服务端不回包」的请求，原生 timeout 不触发，
-      // 回调永远不来。这里加 JS 看门狗，到点按超时回调，流程继续。
-      guard = setTimeout(function () {
-        finish(new Error('request timeout: ' + o.timeout + 'ms'));
-      }, o.timeout + 3000);
-
-      var req = { url: o.url, headers: o.headers, timeout: o.timeout };
-      if (o.body !== undefined && o.body !== null && o.body !== '') {
-        req.body = o.body;
-      }
-
-      var fn;
-      if (method === 'POST') fn = $httpClient.post;
-      else if (method === 'PUT') fn = $httpClient.put;
-      else if (method === 'DELETE') fn = $httpClient.delete;
-      else fn = $httpClient.get;
-
-      // Loon 只保证 get / post，其它方法一律降级为 post
-      if (typeof fn !== 'function') fn = $httpClient.post;
-
-      try {
-        fn(req, function (err, resp, data) {
-          if (err) finish(err);
-          else finish(null, resp, data);
-        });
-      } catch (e) {
-        finish(e);
-      }
+      if (isWaterCost(o.url)) return waterBatch(o, cb);
+      return fire(o, cb);
     };
   }
 
@@ -174,6 +257,8 @@ var require = (function () {
 })();
 /* =============== 兼容层结束 =============== */
 
+/* 兜底收尾：脚本要串行发几十个请求，万一有一条永久挂起，
+   到点主动 $done，避免 Loon 一直显示「运行中」直到插件超时被杀 */
 (function () {
   var raw = (typeof $done === 'function') ? $done : null;
   if (!raw) return;
