@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v11（2026-11-16）：任务版换 2026 新接口（mission/list + accept/draw，Cookie 认证），复用 5jwoj/BeRich 的 pdd_orchard；浇水保持并发连浇
+#!desc = v12（2026-11-16）：修复任务版「只打一行就 Script done」——Loon 适配层不再依赖 globalThis，读取 $persistentStore/$httpClient/$notification 改为作用域直连；新增启动自检（存储键命中情况全打印）+ 用 ddgyck 兜底重建 Cookie。首次使用请先进一次「多多果园」抓 pdd_user_id
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 11
+#!version = 12
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
