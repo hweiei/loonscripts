@@ -31,11 +31,15 @@ if (!token) {
 }
 
 if (token) {
+  // 只存纯 token：果园脚本会把这个值原样塞进 accesstoken 请求头，
+  // 存成 "PDDAccessToken=xxx" 会被服务端判为无效
+  const pure = token.replace(/^PDDAccessToken=/i, '');
   const old = $persistentStore.read(KEY);
-  if (old !== token) {
-    $persistentStore.write(token, KEY);
-    console.log(`✅ 已保存到 ${KEY}: ${token}`);
-    $notification.post('拼多多果园', 'Token 获取成功', token.slice(0, 48));
+  const oldPure = typeof old === 'string' ? old.replace(/^PDDAccessToken=/i, '') : old;
+  if (oldPure !== pure) {
+    $persistentStore.write(pure, KEY);
+    console.log(`✅ 已保存到 ${KEY}: ${pure}`);
+    $notification.post('拼多多果园', 'Token 获取成功', pure.slice(0, 48));
   } else {
     console.log('Token 未变化，跳过写入');
   }
