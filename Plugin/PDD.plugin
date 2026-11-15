@@ -1,16 +1,17 @@
 #!name = 拼多多果园
-#!desc = 自动完成多多果园日常（签到/浇水/任务奖励/帮好友）+ 自动抓取 AccessToken
+#!desc = v5（2026-11-16）：自动完成果园日常（签到/浇水/任务奖励/帮好友）+ 自动抓取 AccessToken
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
-#!version = 4
+#!type = normal
+#!version = 5
 
 [Script]
 ; 1) 抓 AccessToken，写入本地存储 ddgyck（只读 header，不改请求）
-http-request ^https?:\/\/[^\/]*(yangkeduo|pinduoduo)\.com\/ script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_getToken.js, requires-body=false, timeout=10, tag=拼多多Token抓取, enable=true
+http-request ^https?:\/\/([^\/]+\.)?(yangkeduo|pinduoduo)\.com\/ script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_getToken.js, requires-body=false, timeout=10, tag=拼多多Token抓取, enable=true
 ; 2) 果园定时任务（已内置 Loon 兼容层，不要再用上游 pdd_guoyuan.js）
 cron "30 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_guoyuan_loon.js, timeout=300, tag=拼多多果园, enable=true
 
-[MitM]
-hostname = %APPEND% *.yangkeduo.com, *.pinduoduo.com
+[Mitm]
+hostname = %APPEND% *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
