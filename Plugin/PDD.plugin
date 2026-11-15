@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v12（2026-11-16）：修复任务版「只打一行就 Script done」——Loon 适配层不再依赖 globalThis，读取 $persistentStore/$httpClient/$notification 改为作用域直连；新增启动自检（存储键命中情况全打印）+ 用 ddgyck 兜底重建 Cookie。首次使用请先进一次「多多果园」抓 pdd_user_id
+#!desc = v13（2026-11-16 06:45）：实测拼多多只校验 Cookie 里的 PDDAccessToken（无 uid 也返回 40001 登录失效，不是缺参数），因此取消 pdd_user_id 硬性拦截，缺 uid 用空值继续跑。抓不到凭据时先跑一次看接口返回，再决定是否重抓
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 12
+#!version = 13
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
