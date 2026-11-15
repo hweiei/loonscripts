@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v6（2026-11-16）：浇水改为连浇到 100g 保留线（等同 App 一键浇水）+ 果园日常 + 抓 AccessToken
+#!desc = v7（2026-11-16）：修复浇水被拒后 token 失效引发的 500，摘掉上游 10 倍空转循环，日志每 10 次一行
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 6
+#!version = 7
 
 [Script]
 ; 1) 抓 AccessToken，写入本地存储 ddgyck（只读 header，不改请求）
