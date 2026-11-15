@@ -92,7 +92,7 @@ if (ckStr) {
     if (cookieData.ywguid && cookieData.ywkey && cookieData.ywtoken) {
       $.index = 1;
       console.log(`\n\n开始【QQ阅读任务】`);
-      console.log(`🔧 脚本版本: v10（看门狗 + 最新 giftId）`);
+      console.log(`🔧 脚本版本: v11（init 一次 + 全请求看门狗 2.5s）`);
 
       // 1. 检测昵称，判断 Cookie 是否有效
       await NickName(globalCookie);
@@ -710,46 +710,36 @@ async function GetAwardMonth(Cookie) {
 // ===================== 视频初始化（查询宝箱） =====================
 
 async function GetVideoinit(Cookie, silent = false) {
-  return new Promise((resolve) => {
-    let Url = {
-      url: "https://eventv3.reader.qq.com/activity/new_welfare/init",
-      timeout: 12000,
-      headers: {
+  const data = await httpGetSafe(
+      "https://eventv3.reader.qq.com/activity/new_welfare/init",
+      {
         'Accept': 'application/json, text/plain, */*',
         'cookie': Cookie
-      }
-    };
+      },
+      2500
+  );
 
-    $.get(Url, async (err, resp, data) => {
-      try {
-        data = JSON.parse(data);
-        if (data.code === 0 && data.data?.multiVideoRewardVo?.giftInfoList) {
-          const unitMap = extractUnitMap(data.data.multiVideoRewardVo.giftInfoList);
+  if (data.code === 0 && data.data?.multiVideoRewardVo?.giftInfoList) {
+    const unitMap = extractUnitMap(data.data.multiVideoRewardVo.giftInfoList);
 
-          $.availableGifts = data.data.multiVideoRewardVo.giftInfoList
-              .filter(gift => !gift.received)
-              .map(gift => ({
-                giftId: gift.giftId,
-                packageCount: gift.packageCount,
-                giftName: gift.giftName,
-                awardType: gift.awardType,
-                unit: unitMap[gift.awardType] || '🎁'
-              }));
+    $.availableGifts = data.data.multiVideoRewardVo.giftInfoList
+        .filter(gift => !gift.received)
+        .map(gift => ({
+          giftId: gift.giftId,
+          packageCount: gift.packageCount,
+          giftName: gift.giftName,
+          awardType: gift.awardType,
+          unit: unitMap[gift.awardType] || '🎁'
+        }));
 
-          if (!silent) console.log(`🎁 宝箱: ${$.availableGifts.length} 个可领取`);
-        } else {
-          $.availableGifts = [];
-          if (!silent) console.log(`🎁 宝箱: 无可领取礼物`);
-        }
-        $.videoInit = data;  // ⚠️ 修复：改用独立变量
-      } catch (e) {
-        console.log(`解析 GetVideoinit JSON 出错: ${e}`);
-        $.availableGifts = [];
-      } finally {
-        resolve();
-      }
-    });
-  });
+    if (!silent) console.log(`🎁 宝箱: ${$.availableGifts.length} 个可领取`);
+  } else {
+    $.availableGifts = [];
+    if (!silent) console.log(`🎁 宝箱: 无可领取礼物`);
+  }
+
+  $.videoInit = data;
+  return data;
 }
 
 // ===================== 视频扫一扫（前置检查） =====================
@@ -761,10 +751,9 @@ async function ScanVideo(Cookie, mark = 0) {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
         'Accept': 'application/json, text/plain, */*',
-        'Connection': 'close',
         'cookie': Cookie
       },
-      12000
+      2500
   );
   if (logs === 1) console.log(`【视频扫描】code=${r.code} ${r.msg || ''}`);
   if (r.code === 0) {
@@ -778,6 +767,7 @@ async function ScanVideo(Cookie, mark = 0) {
 // ===================== 宝箱视频任务 =====================
 
 async function BoxVideo(Cookie) {
+  // init 只做一次：每轮重复 init 会在第 2 个宝箱时挂住不回包
   await GetVideoinit(Cookie);
 
   if (!$.availableGifts?.length) {
@@ -786,64 +776,48 @@ async function BoxVideo(Cookie) {
   }
 
   const t0 = Date.now();
-  const total = $.availableGifts.length;
-  const BUDGET = 100000;          // 本次预算 100s，到点一定收尾，绝不无限拖
-  const attempts = {};            // giftId -> 已尝试次数
-  const okIds = {};               // giftId -> 已领到
+  const gifts = $.availableGifts.slice();
+  const total = gifts.length;
+  const BUDGET = 10000;          // 10s 硬预算
   const rewardsSummary = {};
   let successCount = 0;
   let failStreak = 0;
 
-  console.log(`\n📦 共 ${total} 个待领取（本次预算 ${BUDGET / 1000}s）`);
+  console.log(`\n📦 共 ${total} 个待领取（预算 10s）`);
 
-  for (let step = 0; step < total * 3; step++) {
+  for (let i = 0; i < total; i++) {
     if (Date.now() - t0 > BUDGET) {
-      console.log(`\n⏱️ 已用 ${((Date.now() - t0) / 1000).toFixed(0)}s，到预算上限，收尾`);
+      console.log(`\n⏱️ 已用 ${((Date.now() - t0) / 1000).toFixed(1)}s，到 10s 预算，收尾`);
       break;
     }
 
-    // 每轮重新 init：等价于「重跑脚本」时的那一次初始化。
-    // 服务端每次 init 下发的 giftId 可能不是同一批，拿上一轮的旧 id 去领，
-    // 请求会发出去但永远不回包（就是卡住的那一步）。
-    await GetVideoinit(Cookie, true);
-    const list = ($.availableGifts || []).filter(g => {
-      const id = String(g.giftId);
-      return !okIds[id] && (attempts[id] || 0) < 2;
-    });
-    if (!list.length) break;
+    const gift = gifts[i];
+    console.log(`\n🎁 ${gift.giftName} x${gift.packageCount} (id:${shortId(gift.giftId)})`);
 
-    const gift = list[0];         // 永远领「当前列表的第一个」，不认旧 id
-    const gid = String(gift.giftId);
-    attempts[gid] = (attempts[gid] || 0) + 1;
-
-    console.log(`\n🎁 ${gift.giftName} x${gift.packageCount} (id:${shortId(gid)}${attempts[gid] > 1 ? ' 重试' : ''})`);
-
+    // 每个宝箱只需要一次新资格；列表沿用开头那次 init 的结果
     let scan = await ScanVideo(Cookie);
-    if (scan.code !== 0) {
-      await sleep(600);
+    if (scan.code !== 0 && Date.now() - t0 < BUDGET - 3000) {
       scan = await ScanVideo(Cookie);
     }
     if (scan.code !== 0) {
-      console.log('   ⚠️ 扫描未通过，跳过该宝箱');
+      console.log('   ⚠️ 扫描未通过，跳过');
+      failStreak++;
+      if (failStreak >= 3) break;
       continue;
     }
 
-    let result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
+    let result = await runBoxVideo(Cookie, gift.giftId, i + 1);
 
-    // -3：资格还在，只是「观看时长」没被记账。重扫会把计时清零，所以只等不扫。
+    // -3：资格还在，只是观看时长没记账。重扫会清零计时，所以只等不扫。
     if (result.code === -3) {
-      console.log('   ↻ 未看完(-3)，等 3s 用同一份资格再领');
-      await sleep(3000);
-      result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
+      await sleep(300);
+      result = await runBoxVideo(Cookie, gift.giftId, i + 1);
     } else if (result.code === -998 || result.code === -997) {
-      // 请求被黑洞：换一条新连接重发，服务端经常只对其中一条回包
-      console.log('   ↻ 无响应，换连接重发一次');
-      await sleep(800);
-      result = await runBoxVideo(Cookie, gift.giftId, attempts[gid]);
+      // 请求被黑洞：换条连接马上重发，不重新 scan
+      result = await runBoxVideo(Cookie, gift.giftId, i + 1);
     }
 
     if (result.code === 0) {
-      okIds[gid] = true;
       successCount++;
       failStreak = 0;
       if (!rewardsSummary[gift.awardType]) {
@@ -859,18 +833,16 @@ async function BoxVideo(Cookie) {
       failStreak++;
       const hint = result.code === -5 ? " (需要先看广告)" :
           result.code === -3 ? " (视频未看完)" : "";
-      console.log(`   ❌ 领取失败 [${result.code}]: ${result.msg || '未知错误'}${hint}`);
-      if (failStreak >= 4) {
-        console.log(`\n⛔ 连续 ${failStreak} 个失败，停止本轮`);
+      console.log(`   ❌ [${result.code}] ${result.msg || '未知错误'}${hint}`);
+      if (failStreak >= 3) {
+        console.log(`\n⛔ 连续 ${failStreak} 个失败，停止`);
         break;
       }
     }
-
-    await sleep(600);
   }
 
   $.videoRewards = rewardsSummary;
-  console.log(`\n📊 宝箱任务完成: 成功 ${successCount}/${total}，用时 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  console.log(`\n📊 宝箱任务完成: 成功 ${successCount}/${total}，用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
 async function runBoxVideo(Cookie, giftId, attempt) {
@@ -880,10 +852,9 @@ async function runBoxVideo(Cookie, giftId, attempt) {
         'User-Agent': 'QQReaderUI/52154 CFNetwork/3860.500.112 Darwin/25.4.0',
         'ua': 'iPhone 16 Pro Max-iOS26.4',
         'Accept': 'application/json, text/plain, */*',
-        'Connection': 'close',
         'cookie': Cookie
       },
-      12000
+      2500
   );
   if (logs === 1) console.log(`第 ${attempt} 次 getGift: code=${r.code} ${r.msg || ''}`);
   return r;
