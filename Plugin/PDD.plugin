@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v20（2026-11-16 15:31）：任务列表已打通（tag/mission/list 返回 4 个任务），新增字段诊断——当可领取为 0 时，把每个任务的所有字段名和值逐行打印，用于确定真实的完成/领取状态字段。领取仍走 complete/gain + 当前毫秒时间戳
+#!desc = v21（2026-11-16 15:37）：任务字段已确认——用真实响应核对后，4 个任务 current_amount 都是 0（确实没做），所以不再只挑「已完成」的，改为把每个未领完的任务都提交一次 complete/gain，由服务端判定能否结算，日志逐条给出结果（领取成功 / 未达成+原因）
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 20
+#!version = 21
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
@@ -13,7 +13,7 @@ http-request ^https?:\/\/mobile\.yangkeduo\.com\/ script-path=https://raw.github
 ; 2) 果园定时任务（已内置 Loon 兼容层，不要再用上游 pdd_guoyuan.js）
 cron "30 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_guoyuan_loon.js?v=5, timeout=300, tag=拼多多果园, enable=true
 ; 3) 果园任务版：签到 + 任务 accept/draw（2026 新接口，与浇水错开 5 分钟）
-cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=9, timeout=120, tag=拼多多果园任务, enable=true
+cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=10, timeout=120, tag=拼多多果园任务, enable=true
 
 [Mitm]
 hostname = %APPEND% mobile.yangkeduo.com, *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
