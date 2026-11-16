@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.8";
+const VERSION = "v1.1.0-loon.9";
 let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
@@ -409,6 +409,23 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
     }
     log(`[任务] 共${keys.length}个，可领取${todo.length}个`);
     __missionStat = { total: keys.length, claim: todo.length, accept: 0 };
+
+    // 拿不到可领取项时，把每个任务的所有字段原样打出来（一行一个，便于定位真实字段名）
+    if (!todo.length) {
+      for (const k of keys.slice(0, 8)) {
+        const m = mlist[k] || {};
+        const parts = [];
+        for (const f in m) {
+          if (!Object.prototype.hasOwnProperty.call(m, f)) continue;
+          let v = m[f];
+          if (v && typeof v === 'object') { try { v = JSON.stringify(v); } catch (e) { v = '[obj]'; } }
+          v = String(v);
+          if (v.length > 40) v = v.slice(0, 40) + '..';
+          parts.push(f + '=' + v);
+        }
+        log(`[任务${k}] ${parts.join(' | ')}`);
+      }
+    }
 
     let total = 0;
     for (const t of todo) {
