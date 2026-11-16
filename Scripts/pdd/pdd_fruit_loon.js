@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.7";
+const VERSION = "v1.1.0-loon.8";
 let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
@@ -364,102 +364,80 @@ async function waterTree(pdduid, cookieStr, tubetoken, maxTimes = 50) {
 
 async function handleMissions(pdduid, cookieStr, tubetoken) {
   log("--- [4/6] 任务处理 ---");
-  const rp = {};
-  for (let i = 1; i <= 8; i++) rp[String(i)] = { "needRefresh": true };
-
   try {
-    const MTYPES = [38160,38242,38090,38451,37859,38428,38500,38501,38502,38503,38504,38505,38600,38601,38700,38701,38800,38900,37900,37950,38000,38050,38100,38150];
-    const RP = { "act201015EntryInfo": rp, "act201036EntryInfo": rp };
-    const SIMPLE_BODY = { "tubetoken": tubetoken, "fun_pl": 2 };
-    const FULL_BODY = { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 };
-    // 三个前缀里只有 manor/ 裸路径被拒，先试另外两个（home/page 与 query/user/water 都在用）
-    const tries = [
-      { n: "P1 manor-query/proxy + 简body", p: `${MANOR_BASE}/manor-query/proxy`, b: SIMPLE_BODY },
-      { n: "P2 manor-gateway + 简body", p: `${MANOR_BASE}/manor-gateway/manor`, b: SIMPLE_BODY },
-      { n: "P3 manor(原) + 全参数", p: `${MANOR_BASE}/manor`, b: FULL_BODY }
-    ];
-    let missionBase = `${MANOR_BASE}/manor`;
-    let res = null;
-    for (let si = 0; si < tries.length; si++) {
-      const st = tries[si];
-      res = await httpRequest({
-        url: `${st.p}/mission/list?pdduid=${pdduid}`,
-        headers: { "Cookie": cookieStr },
-        body: st.b
-      });
-      const ec = res ? res.error_code : "null";
-      const nAct = (res && res.activity_vo_map) ? Object.keys(res.activity_vo_map).length : 0;
-      const nMis = (res && res.mission_list) ? (Array.isArray(res.mission_list) ? res.mission_list.length : Object.keys(res.mission_list).length) : 0;
-      log(`[任务探测] ${st.n} → error=${ec} 活动=${nAct} 任务=${nMis} msg=${(res && res.error_msg) || "-"}`);
-      if (res && !res.error_code) { missionBase = st.p; log(`[任务] 采用路径 ${st.p}`); break; }
-      if (si < tries.length - 1) await sleep(1200);
-    }
-
-    const actMap = (res && res.activity_vo_map) ? res.activity_vo_map : {};
-    const tasks = [];
-    Object.keys(actMap).forEach(aid => {
-      const mlist = actMap[aid].mission_list || {};
-      Object.keys(mlist).forEach(mid => {
-        const m = mlist[mid];
-        let rwd = 0, rtype = "";
-        const rewardInfo = m.reward_info || [];
-        for (const ri of rewardInfo) {
-          if (ri.reward_type === 1) {
-            rwd = ri.min_reward_amount || 0;
-            rtype = "水滴";
-            break;
-          }
-        }
-        if (!rwd && rewardInfo.length > 0) {
-          for (const ri of rewardInfo) {
-            rwd = ri.min_reward_amount || 0;
-            rtype = `T${ri.reward_type || '?'}`;
-            break;
-          }
-        }
-        tasks.push({
-          activity_id: parseInt(aid),
-          mission_id: parseInt(mid),
-          is_draw: m.is_draw || false,
-          is_open: m.is_open || false,
-          finished_count: m.finished_count || 0,
-          reward_amount: rwd,
-          reward_type: rtype
-        });
-      });
+    // ================= 依据（果园 H5 garden-9a8b795a...js 里的真实代码）=================
+    // 1) 任务列表  api/manor-query/tag/mission/list  → r.p.post(..., body)   [93493 模块]
+    // 2) 领取      api/manor/mission/complete/gain?ts=Date.now()  → i.p.post(...)  [422985 处]
+    //              body: mission_type / share_uid / friend_uid / mission_param /
+    //                    water_rain_score / gain_time / no_reward / store_to_water_bag
+    // 3) 作者脚本里的 mission/accept、mission/draw 实测 HTTP 40003 = 接口不存在，已删除
+    // 4) 旧脚本的 ts 写死 1671003202054（2022-12-14），服务端按时间戳校验 → 「前端不允许完成的任务」
+    let res = await httpRequest({
+      url: `${MANOR_BASE}/manor-query/tag/mission/list?pdduid=${pdduid}`,
+      headers: { "Cookie": cookieStr },
+      body: { "mission_tag": "HOME_GAIN_WATER_MISSION_LIST_EXTRA", "fun_pl": 2, "tubetoken": tubetoken }
     });
+    let mlist = (res && res.mission_list) ? res.mission_list : null;
+    log(`[任务列表] tag/mission/list → error=${res ? res.error_code : "null"} 任务=${mlist ? Object.keys(mlist).length : 0} msg=${(res && res.error_msg) || "-"}`);
 
-    const canClaim = tasks.filter(t => !t.is_draw && t.is_open && t.finished_count >= 1);
-    const needAccept = tasks.filter(t => !t.is_draw && !t.is_open && t.finished_count >= 1);
-    log(`[任务] 共${tasks.length}个，可领取${canClaim.length}，待接受${needAccept.length}`);
-    __missionStat = { total: tasks.length, claim: canClaim.length, accept: needAccept.length };
-    if (!tasks.length) { log("[任务] 原始响应:", res); }
-
-    for (const t of needAccept) {
-      log(`[接受任务] act=${t.activity_id} id=${t.mission_id}`);
-      await httpRequest({
-        url: `${missionBase}/mission/accept?pdduid=${pdduid}`,
-        headers: { "Cookie": cookieStr },
-        body: { "mission_id": t.mission_id, "activity_id": t.activity_id, "tubetoken": tubetoken, "fun_pl": 2 }
+    if (!mlist) {
+      const r2 = await httpRequest({
+        url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}&shared_uid=&screen_token=`,
+        method: "GET",
+        headers: { "Cookie": cookieStr }
       });
-      await sleep(500);
+      const m2 = (r2 && r2.mission_list) ? r2.mission_list : null;
+      log(`[任务列表] manor/mission/list(GET) → error=${r2 ? r2.error_code : "null"} 任务=${m2 ? Object.keys(m2).length : 0} msg=${(r2 && r2.error_msg) || "-"}`);
+      if (m2) { res = r2; mlist = m2; }
     }
+
+    if (!mlist) {
+      log("[任务] 两条接口均未返回 mission_list，原始响应:", res);
+      __missionStat = { total: 0, claim: 0, accept: 0 };
+      return 0;
+    }
+
+    const keys = Object.keys(mlist);
+    const todo = [];
+    for (const k of keys) {
+      const m = mlist[k] || {};
+      const finished = m.finished_count || m.finish_count || 0;
+      const drawn = !!(m.is_draw || m.has_draw || m.draw_status === 1);
+      const need = m.need_count || m.total_count || 1;
+      if (!drawn && finished >= need) todo.push({ type: parseInt(k, 10), m: m });
+    }
+    log(`[任务] 共${keys.length}个，可领取${todo.length}个`);
+    __missionStat = { total: keys.length, claim: todo.length, accept: 0 };
 
     let total = 0;
-    for (const t of canClaim) {
+    for (const t of todo) {
       const dr = await httpRequest({
-        url: `${missionBase}/mission/draw?pdduid=${pdduid}`,
+        url: `${MANOR_BASE}/manor/mission/complete/gain?ts=${Date.now()}&pdduid=${pdduid}`,
         headers: { "Cookie": cookieStr },
-        body: { "mission_id": t.mission_id, "activity_id": t.activity_id, "tubetoken": tubetoken, "fun_pl": 2 }
+        body: {
+          "mission_type": t.type,
+          "share_uid": 0,
+          "friend_uid": 0,
+          "mission_param": 0,
+          "water_rain_score": 0,
+          "gain_time": 1,
+          "no_reward": false,
+          "store_to_water_bag": false,
+          "fun_pl": 2,
+          "tubetoken": tubetoken
+        }
       });
-      if (dr && dr.success) {
-        const amt = dr.water || dr.reward_amount || t.reward_amount;
+      if (dr && !dr.error_code) {
+        let amt = 0;
+        if (dr.reward_list && dr.reward_list[0]) amt = dr.reward_list[0].reward_amount || 0;
         total += amt;
-        log(`[领取成功] act=${t.activity_id} id=${t.mission_id}: +${amt} ${t.reward_type}`);
+        log(`[领取成功] type=${t.type}: +${amt}g${dr.water_amount !== undefined ? " 余" + dr.water_amount + "g" : ""}`);
+      } else if (dr && dr.result != null) {
+        log(`[跳过] type=${t.type}: 已经领过`);
       } else {
-        log(`[领取失败] act=${t.activity_id} id=${t.mission_id}: ${dr ? dr.error_msg : ''}`);
+        log(`[领取失败] type=${t.type}: ${(dr && dr.error_msg) || (dr && dr.error_code) || "无响应"}`);
       }
-      await sleep(500);
+      await sleep(600);
     }
     return total;
   } catch (e) { log("[任务异常]", e); return 0; }
