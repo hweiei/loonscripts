@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v17（2026-11-16 15:05）：脚本地址加版本参数 ?v=6，强制 Loon 重新拉取，不再吃 raw 缓存。内含 mission/list 10018 修复：补 AccessToken 头 + 5 级参数降级探测
+#!desc = v18（2026-11-16 15:13）：10018 换方向——参数全试过都失败，改试接口路径。mission/list 原来走 manor/ 裸前缀，而 home/page 走 manor-query/proxy、query/user/water 走 manor-gateway/manor 都正常。现在依次试 manor-query/proxy → manor-gateway/manor → manor 原路径，成功的路径会用于后续 accept/draw
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 17
+#!version = 18
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
@@ -13,7 +13,7 @@ http-request ^https?:\/\/mobile\.yangkeduo\.com\/ script-path=https://raw.github
 ; 2) 果园定时任务（已内置 Loon 兼容层，不要再用上游 pdd_guoyuan.js）
 cron "30 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_guoyuan_loon.js?v=5, timeout=300, tag=拼多多果园, enable=true
 ; 3) 果园任务版：签到 + 任务 accept/draw（2026 新接口，与浇水错开 5 分钟）
-cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=6, timeout=120, tag=拼多多果园任务, enable=true
+cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=7, timeout=120, tag=拼多多果园任务, enable=true
 
 [Mitm]
 hostname = %APPEND% mobile.yangkeduo.com, *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
