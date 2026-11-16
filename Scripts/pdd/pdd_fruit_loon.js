@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.6";
+const VERSION = "v1.1.0-loon.7";
 let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
@@ -370,18 +370,20 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
   try {
     const MTYPES = [38160,38242,38090,38451,37859,38428,38500,38501,38502,38503,38504,38505,38600,38601,38700,38701,38800,38900,37900,37950,38000,38050,38100,38150];
     const RP = { "act201015EntryInfo": rp, "act201036EntryInfo": rp };
-    const strategies = [
-      { n: "A原版", b: { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
-      { n: "B无activity_id_list", b: { "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
-      { n: "C无request_params", b: { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
-      { n: "D只留tubetoken", b: { "tubetoken": tubetoken, "fun_pl": 2 } },
-      { n: "E空body", b: {} }
+    const SIMPLE_BODY = { "tubetoken": tubetoken, "fun_pl": 2 };
+    const FULL_BODY = { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 };
+    // 三个前缀里只有 manor/ 裸路径被拒，先试另外两个（home/page 与 query/user/water 都在用）
+    const tries = [
+      { n: "P1 manor-query/proxy + 简body", p: `${MANOR_BASE}/manor-query/proxy`, b: SIMPLE_BODY },
+      { n: "P2 manor-gateway + 简body", p: `${MANOR_BASE}/manor-gateway/manor`, b: SIMPLE_BODY },
+      { n: "P3 manor(原) + 全参数", p: `${MANOR_BASE}/manor`, b: FULL_BODY }
     ];
+    let missionBase = `${MANOR_BASE}/manor`;
     let res = null;
-    for (let si = 0; si < strategies.length; si++) {
-      const st = strategies[si];
+    for (let si = 0; si < tries.length; si++) {
+      const st = tries[si];
       res = await httpRequest({
-        url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}`,
+        url: `${st.p}/mission/list?pdduid=${pdduid}`,
         headers: { "Cookie": cookieStr },
         body: st.b
       });
@@ -389,8 +391,8 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
       const nAct = (res && res.activity_vo_map) ? Object.keys(res.activity_vo_map).length : 0;
       const nMis = (res && res.mission_list) ? (Array.isArray(res.mission_list) ? res.mission_list.length : Object.keys(res.mission_list).length) : 0;
       log(`[任务探测] ${st.n} → error=${ec} 活动=${nAct} 任务=${nMis} msg=${(res && res.error_msg) || "-"}`);
-      if (res && !res.error_code) break;
-      if (si < strategies.length - 1) await sleep(900);
+      if (res && !res.error_code) { missionBase = st.p; log(`[任务] 采用路径 ${st.p}`); break; }
+      if (si < tries.length - 1) await sleep(1200);
     }
 
     const actMap = (res && res.activity_vo_map) ? res.activity_vo_map : {};
@@ -436,7 +438,7 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
     for (const t of needAccept) {
       log(`[接受任务] act=${t.activity_id} id=${t.mission_id}`);
       await httpRequest({
-        url: `${MANOR_BASE}/manor/mission/accept?pdduid=${pdduid}`,
+        url: `${missionBase}/mission/accept?pdduid=${pdduid}`,
         headers: { "Cookie": cookieStr },
         body: { "mission_id": t.mission_id, "activity_id": t.activity_id, "tubetoken": tubetoken, "fun_pl": 2 }
       });
@@ -446,7 +448,7 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
     let total = 0;
     for (const t of canClaim) {
       const dr = await httpRequest({
-        url: `${MANOR_BASE}/manor/mission/draw?pdduid=${pdduid}`,
+        url: `${missionBase}/mission/draw?pdduid=${pdduid}`,
         headers: { "Cookie": cookieStr },
         body: { "mission_id": t.mission_id, "activity_id": t.activity_id, "tubetoken": tubetoken, "fun_pl": 2 }
       });
