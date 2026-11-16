@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.9";
+const VERSION = "v1.1.0-loon.10";
 let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
@@ -400,34 +400,26 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
 
     const keys = Object.keys(mlist);
     const todo = [];
+    let fullCnt = 0;
     for (const k of keys) {
       const m = mlist[k] || {};
-      const finished = m.finished_count || m.finish_count || 0;
-      const drawn = !!(m.is_draw || m.has_draw || m.draw_status === 1);
-      const need = m.need_count || m.total_count || 1;
-      if (!drawn && finished >= need) todo.push({ type: parseInt(k, 10), m: m });
+      const max = m.max_count || 1;
+      const drawed = m.drawed_count || 0;
+      if (m.is_draw === true || drawed >= max) continue;          // 已领完，跳过
+      const cur = m.current_amount || 0;
+      const tgt = m.target_amount || 1;
+      const done = (m.finished_count || 0) > 0 || cur >= tgt;
+      if (done) fullCnt++;
+      todo.push({ type: parseInt(k, 10), done: done, cur: cur, tgt: tgt });
     }
-    log(`[任务] 共${keys.length}个，可领取${todo.length}个`);
-    __missionStat = { total: keys.length, claim: todo.length, accept: 0 };
+    // 进度已满的排前面
+    todo.sort(function (a, b) { return (b.done ? 1 : 0) - (a.done ? 1 : 0); });
+    log(`[任务] 共${keys.length}个，未领${todo.length}个（进度已满 ${fullCnt} 个）`);
+    __missionStat = { total: keys.length, claim: fullCnt, accept: todo.length - fullCnt };
 
-    // 拿不到可领取项时，把每个任务的所有字段原样打出来（一行一个，便于定位真实字段名）
-    if (!todo.length) {
-      for (const k of keys.slice(0, 8)) {
-        const m = mlist[k] || {};
-        const parts = [];
-        for (const f in m) {
-          if (!Object.prototype.hasOwnProperty.call(m, f)) continue;
-          let v = m[f];
-          if (v && typeof v === 'object') { try { v = JSON.stringify(v); } catch (e) { v = '[obj]'; } }
-          v = String(v);
-          if (v.length > 40) v = v.slice(0, 40) + '..';
-          parts.push(f + '=' + v);
-        }
-        log(`[任务${k}] ${parts.join(' | ')}`);
-      }
-    }
-
-    let total = 0;
+    // complete/gain 是「完成并领取」合一接口。进度未满的也提交一次：
+    // 部分任务类型服务端会依据 completeChannel/上报数据直接判定完成，最终以服务端返回为准。
+    let total = 0, okCnt = 0;
     for (const t of todo) {
       const dr = await httpRequest({
         url: `${MANOR_BASE}/manor/mission/complete/gain?ts=${Date.now()}&pdduid=${pdduid}`,
@@ -445,18 +437,24 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
           "tubetoken": tubetoken
         }
       });
-      if (dr && !dr.error_code) {
+      const ec = dr ? dr.error_code : "null";
+      const bad = dr && dr.error_msg && String(dr.error_msg).length > 0;
+      if (dr && !bad && (ec === 0 || ec === null || ec === undefined || ec === "")) {
         let amt = 0;
         if (dr.reward_list && dr.reward_list[0]) amt = dr.reward_list[0].reward_amount || 0;
-        total += amt;
+        if (!amt && dr.reward_amount) amt = dr.reward_amount;
+        total += amt; okCnt++;
         log(`[领取成功] type=${t.type}: +${amt}g${dr.water_amount !== undefined ? " 余" + dr.water_amount + "g" : ""}`);
-      } else if (dr && dr.result != null) {
-        log(`[跳过] type=${t.type}: 已经领过`);
+      } else if (dr && dr.result != null && !bad) {
+        log(`[跳过] type=${t.type}: 已领过`);
       } else {
-        log(`[领取失败] type=${t.type}: ${(dr && dr.error_msg) || (dr && dr.error_code) || "无响应"}`);
+        log(`[未达成] type=${t.type} 进度${t.cur}/${t.tgt}: ${(dr && (dr.error_msg || dr.error_code)) || "无响应"}`);
       }
-      await sleep(600);
+      await sleep(800);
     }
+    __missionStat.claim = okCnt;
+    __missionStat.accept = todo.length - okCnt;
+    log(`[任务] 本轮成功 ${okCnt}/${todo.length}`);
     return total;
   } catch (e) { log("[任务异常]", e); return 0; }
 }
