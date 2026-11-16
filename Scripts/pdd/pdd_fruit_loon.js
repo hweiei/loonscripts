@@ -75,7 +75,7 @@ var $task = {
     }
 };
 
-const VERSION = "v1.1.0-loon.5";
+const VERSION = "v1.1.0-loon.6";
 let __missionStat = { total: 0, claim: 0, accept: 0 };
 const LOG_PREFIX = `[拼多多果园 ${VERSION}]`;
 const DEBUG = true;
@@ -225,13 +225,19 @@ function httpRequest(options) {
     const reqOpts = {
       url: options.url,
       method: options.method || "POST",
-      headers: Object.assign({
-        "User-Agent": UA,
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Origin": "https://mobile.yangkeduo.com",
-        "Referer": "https://mobile.yangkeduo.com/garden_index_lz_0.html",
-      }, options.headers || {}),
+      headers: (function () {
+        const h = Object.assign({
+          "User-Agent": UA,
+          "Accept": "application/json, text/plain, */*",
+          "Content-Type": "application/json;charset=UTF-8",
+          "Origin": "https://mobile.yangkeduo.com",
+          "Referer": "https://mobile.yangkeduo.com/garden_index_lz_0.html",
+        }, options.headers || {});
+        // 真实 H5 请求同时带 AccessToken 头；只给 Cookie 时某些接口会判「用户状态异常」
+        const mt = String(h.Cookie || "").match(/PDDAccessToken=([^;,\s]+)/);
+        if (mt && !h.AccessToken) h.AccessToken = mt[1];
+        return h;
+      })(),
       body: typeof options.body === "object" ? JSON.stringify(options.body) : options.body
     };
 
@@ -362,16 +368,30 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
   for (let i = 1; i <= 8; i++) rp[String(i)] = { "needRefresh": true };
 
   try {
-    const res = await httpRequest({
-      url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}`,
-      headers: { "Cookie": cookieStr },
-      body: {
-        "activity_id_list": [201015, 201036],
-        "mission_types": [38160,38242,38090,38451,37859,38428,38500,38501,38502,38503,38504,38505,38600,38601,38700,38701,38800,38900,37900,37950,38000,38050,38100,38150],
-        "request_params": { "act201015EntryInfo": rp, "act201036EntryInfo": rp },
-        "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2
-      }
-    });
+    const MTYPES = [38160,38242,38090,38451,37859,38428,38500,38501,38502,38503,38504,38505,38600,38601,38700,38701,38800,38900,37900,37950,38000,38050,38100,38150];
+    const RP = { "act201015EntryInfo": rp, "act201036EntryInfo": rp };
+    const strategies = [
+      { n: "A原版", b: { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
+      { n: "B无activity_id_list", b: { "mission_types": MTYPES, "request_params": RP, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
+      { n: "C无request_params", b: { "activity_id_list": [201015, 201036], "mission_types": MTYPES, "lower_end_device": false, "tubetoken": tubetoken, "fun_pl": 2 } },
+      { n: "D只留tubetoken", b: { "tubetoken": tubetoken, "fun_pl": 2 } },
+      { n: "E空body", b: {} }
+    ];
+    let res = null;
+    for (let si = 0; si < strategies.length; si++) {
+      const st = strategies[si];
+      res = await httpRequest({
+        url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}`,
+        headers: { "Cookie": cookieStr },
+        body: st.b
+      });
+      const ec = res ? res.error_code : "null";
+      const nAct = (res && res.activity_vo_map) ? Object.keys(res.activity_vo_map).length : 0;
+      const nMis = (res && res.mission_list) ? (Array.isArray(res.mission_list) ? res.mission_list.length : Object.keys(res.mission_list).length) : 0;
+      log(`[任务探测] ${st.n} → error=${ec} 活动=${nAct} 任务=${nMis} msg=${(res && res.error_msg) || "-"}`);
+      if (res && !res.error_code) break;
+      if (si < strategies.length - 1) await sleep(900);
+    }
 
     const actMap = (res && res.activity_vo_map) ? res.activity_vo_map : {};
     const tasks = [];
