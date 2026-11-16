@@ -372,27 +372,28 @@ async function handleMissions(pdduid, cookieStr, tubetoken) {
     //                    water_rain_score / gain_time / no_reward / store_to_water_bag
     // 3) 作者脚本里的 mission/accept、mission/draw 实测 HTTP 40003 = 接口不存在，已删除
     // 4) 旧脚本的 ts 写死 1671003202054（2022-12-14），服务端按时间戳校验 → 「前端不允许完成的任务」
-    let res = await httpRequest({
-      url: `${MANOR_BASE}/manor-query/tag/mission/list?pdduid=${pdduid}`,
-      headers: { "Cookie": cookieStr },
-      body: { "mission_tag": "HOME_GAIN_WATER_MISSION_LIST_EXTRA", "fun_pl": 2, "tubetoken": tubetoken }
-    });
-    let mlist = (res && res.mission_list) ? res.mission_list : null;
-    log(`[任务列表] tag/mission/list → error=${res ? res.error_code : "null"} 任务=${mlist ? Object.keys(mlist).length : 0} msg=${(res && res.error_msg) || "-"}`);
-
-    if (!mlist) {
-      const r2 = await httpRequest({
-        url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}&shared_uid=&screen_token=`,
-        method: "GET",
-        headers: { "Cookie": cookieStr }
-      });
-      const m2 = (r2 && r2.mission_list) ? r2.mission_list : null;
-      log(`[任务列表] manor/mission/list(GET) → error=${r2 ? r2.error_code : "null"} 任务=${m2 ? Object.keys(m2).length : 0} msg=${(r2 && r2.error_msg) || "-"}`);
-      if (m2) { res = r2; mlist = m2; }
+    let res = null, mlist = null;
+    const tagBody = { "mission_tag": "HOME_GAIN_WATER_MISSION_LIST_EXTRA", "fun_pl": 2, "tubetoken": tubetoken };
+    // fun_pl 在前端是动态探测值（this.funPl / .concat(_)），不是常量；tag 值也不在前端硬编码。
+    // 这两个都不猜，逐个实测，哪个返回 mission_list 就用哪个。
+    const probes = [
+      { n: "tag列表 fun_pl=2", run: function () { return httpRequest({ url: `${MANOR_BASE}/manor-query/tag/mission/list?pdduid=${pdduid}`, headers: { "Cookie": cookieStr }, body: tagBody }); } },
+      { n: "tag列表 fun_pl=10", run: function () { return httpRequest({ url: `${MANOR_BASE}/manor-query/tag/mission/list?pdduid=${pdduid}`, headers: { "Cookie": cookieStr }, body: Object.assign({}, tagBody, { "fun_pl": 10 }) }); } },
+      { n: "mission/list GET", run: function () { return httpRequest({ url: `${MANOR_BASE}/manor/mission/list?pdduid=${pdduid}&shared_uid=&screen_token=`, method: "GET", headers: { "Cookie": cookieStr } }); } }
+    ];
+    for (let pi = 0; pi < probes.length; pi++) {
+      const pb = probes[pi];
+      const r = await pb.run();
+      const m = (r && r.mission_list) ? r.mission_list : null;
+      const cnt = m ? Object.keys(m).length : 0;
+      log(`[任务列表] ${pb.n} → error=${r ? r.error_code : "null"} 任务=${cnt} msg=${(r && r.error_msg) || "-"}`);
+      if (!res) res = r;
+      if (cnt > 0) { res = r; mlist = m; break; }
+      if (pi < probes.length - 1) await sleep(800);
     }
 
     if (!mlist) {
-      log("[任务] 两条接口均未返回 mission_list，原始响应:", res);
+      log("[任务] 三个探测均未拿到 mission_list，原始响应:", res);
       __missionStat = { total: 0, claim: 0, accept: 0 };
       return 0;
     }
