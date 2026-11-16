@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v18（2026-11-16 15:13）：10018 换方向——参数全试过都失败，改试接口路径。mission/list 原来走 manor/ 裸前缀，而 home/page 走 manor-query/proxy、query/user/water 走 manor-gateway/manor 都正常。现在依次试 manor-query/proxy → manor-gateway/manor → manor 原路径，成功的路径会用于后续 accept/draw
+#!desc = v19（2026-11-16 15:22）：任务版按果园 H5 前端源码重写任务流程。任务列表改用 manor-query/tag/mission/list（mission_tag=HOME_GAIN_WATER_MISSION_LIST_EXTRA），领取改用 manor/mission/complete/gain?ts=当前毫秒时间戳（旧脚本写死 2022 年 ts 才报「前端不允许完成」）。作者脚本的 mission/accept、mission/draw 实测 40003 接口不存在，已删除
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 18
+#!version = 19
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
@@ -13,7 +13,7 @@ http-request ^https?:\/\/mobile\.yangkeduo\.com\/ script-path=https://raw.github
 ; 2) 果园定时任务（已内置 Loon 兼容层，不要再用上游 pdd_guoyuan.js）
 cron "30 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_guoyuan_loon.js?v=5, timeout=300, tag=拼多多果园, enable=true
 ; 3) 果园任务版：签到 + 任务 accept/draw（2026 新接口，与浇水错开 5 分钟）
-cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=7, timeout=120, tag=拼多多果园任务, enable=true
+cron "35 1,7,12,18,22 * * *" script-path=https://raw.githubusercontent.com/hweiei/loonscripts/main/Scripts/pdd/pdd_fruit_loon.js?v=8, timeout=120, tag=拼多多果园任务, enable=true
 
 [Mitm]
 hostname = %APPEND% mobile.yangkeduo.com, *.yangkeduo.com, yangkeduo.com, *.pinduoduo.com, pinduoduo.com
