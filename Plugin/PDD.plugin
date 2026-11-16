@@ -1,11 +1,11 @@
 #!name = 拼多多果园
-#!desc = v15（2026-11-16 06:56）：日志精简——对象一律单行截断（最多500字），首页/签到/任务只在出错时打原始响应，正常一次运行约20行，方便复制；通知里带任务统计。含 v14 的 user_manor_info 嵌套修复与 uid 自动回填
+#!desc = v16（2026-11-16 15:03）：修 mission/list 的 10018 风控——补 AccessToken 请求头，并对任务接口做 5 级参数降级（A原版→B去活动ID→C去request_params→D只留tubetoken→E空body），哪一级通就用哪一级；每次运行日志会打印各级探测结果
 #!author = hweiei
 #!icon = https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/pinduoduo.png
 #!tag = 任务
 #!system = iOS,iPadOS
 #!type = normal
-#!version = 15
+#!version = 16
 
 [Script]
 ; 1) 抓凭据：完整 Cookie + pdd_user_id + tubetoken（只读 header，不改请求）
